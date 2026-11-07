@@ -370,7 +370,14 @@ const
   /// bracket, so a header wrapped after its `(` reads `(const A: T)` - an
   /// older library compiles and silently sends `( const A: T)`, which RAD
   /// Studio's Structure pane draws unformatted.
-  cMinPasTreeVersion = '0.151.1';
+  /// 0.157.0 (2026-11-07): TSemaDiag.Note, the conversion detail sent as a
+  /// diagnostic message's second line - an older library does not compile.
+  /// 0.159.0 (2026-11-07): signature help's active overload and the type
+  /// after `F(...).` are the one dcc binds, ranked by the conversion (6.3.1:
+  /// `F(5)` takes F(Byte) over F(Integer) declared first, a `var` parameter
+  /// refuses a literal) - an older library compiles and silently offers the
+  /// first declared overload of a tie.
+  cMinPasTreeVersion = '0.159.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

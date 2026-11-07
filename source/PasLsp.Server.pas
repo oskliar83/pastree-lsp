@@ -1797,6 +1797,10 @@ begin
       LLines := LLines + [Format('    %s %s',
         [PosTag(LFile, LModel.Diags[LDi].Line, LModel.Diags[LDi].Col),
          LModel.Diags[LDi].Msg])];
+      // The editor detail line (TSemaDiag.Note), as PasTreeSemaProject
+      // prints it.
+      if LModel.Diags[LDi].Note <> '' then
+        LLines := LLines + ['      note: ' + LModel.Diags[LDi].Note];
     end;
   end;
   if (LTotal = 0) and not FLogUnits then
@@ -2576,6 +2580,8 @@ begin
       LLines := LLines + [Format('    %s %s',
         [PosTag(LFile, LModel.Diags[LDi].Line, LModel.Diags[LDi].Col),
          LModel.Diags[LDi].Msg])];
+      if LModel.Diags[LDi].Note <> '' then
+        LLines := LLines + ['      note: ' + LModel.Diags[LDi].Note];
     end;
   end;
   LogBlock(LLines);
@@ -3923,6 +3929,18 @@ begin
           PasTreeToLsp(LNameLine, LNameCol, LLine, LChar);
           PasTreeToLsp(LNameLine, LNameColTo, LEndLine, LEndChar);
         end;
+        // The message is dcc's, byte for byte (tooling matches it); PasTree's
+        // editor detail (TSemaDiag.Note - why a conversion fails, the
+        // candidates of an E2250) is its SECOND LINE. Not relatedInformation:
+        // that is a list of other LOCATIONS, and the note has none of its
+        // own - VS Code would draw it as a child row linking back to the
+        // diagnostic itself, and the RAD Studio client reads `message` alone.
+        // VS Code shows the second line in the hover and the Problems panel;
+        // the IDE's hover draws it on its own line, its Error Insight list
+        // keeps the first (NativeErrorInsight).
+        var LMsg := LModel.Diags[LIdx].Msg;
+        if LModel.Diags[LIdx].Note <> '' then
+          LMsg := LMsg + #10 + LModel.Diags[LIdx].Note;
         LItem := Format(
           '{"range":{"start":{"line":%d,"character":%d},' +
           '"end":{"line":%d,"character":%d}},' +
@@ -3930,7 +3948,7 @@ begin
           [LLine, LChar, LLine, LEndChar,
            DiagSeverity(LModel.Diags[LIdx].Code),
            JsonQuote(LModel.Diags[LIdx].Code),
-           JsonQuote(LModel.Diags[LIdx].Msg)]);
+           JsonQuote(LMsg)]);
         if LSeen <> nil then
         begin
           if LSeen.IndexOf(LItem) >= 0 then

@@ -232,7 +232,12 @@ begin
   begin
     if LDiag.Severity > LMax then
       Continue;
+    // One row per error, as dcc's: a second line of the message (the
+    // server's conversion detail, TSemaDiag.Note) is the hover's.
     Result[LCount].Text := LDiag.Text;
+    if Pos(#10, Result[LCount].Text) > 0 then
+      Result[LCount].Text := TrimRight(Copy(Result[LCount].Text, 1,
+        Pos(#10, Result[LCount].Text) - 1));
     Result[LCount].Start.Line := LDiag.Row;
     Result[LCount].Start.CharIndex := LDiag.ColFrom - 1;
     Result[LCount].Stop.Line := LDiag.Row;
