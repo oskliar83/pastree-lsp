@@ -99,17 +99,23 @@ Value positions:
 | a default parameter value, a typed constant | `(A: Integer = \|)`, `const C: T = \|`, an initialized global `var G: T = \|` | constants of the type | variables, typed constants, functions, procedures - a constant expression (the intrinsics one may call stay: `Ord`, `High`, `SizeOf`); a procedural type's constant keeps the routines | 0.84.15 (an inline `var X: T := \|` is no constant and keeps them) |
 | an event or method pointer, a procedural variable or parameter | `OnClick := \|`, `P := \|`, `Foo(\|` for a procedural parameter | a routine whose signature the type takes is fit 0 - `of object` a method, a plain type a plain routine (or a static class method), `reference to` either; a procedure of another signature or kind is fit 3; a function that does not fit is judged by its result | - | 0.84.15 (a routine only the buffer declares, since the last analysis, leads: no signature to compare yet) |
 
-Type positions (types alone are listed; the context ranks them):
+Type positions (types alone are listed; the context ranks them). A type
+item's fit is decided by its own type, not as a value: fit 1 where the
+position takes it, fit 2 where it may (a generic parameter, a unit name as
+a qualifier, a type whose category or ancestry cannot be followed), fit 3
+where dcc rejects it. A ranked position also never lists a type of a
+category that cannot stand there at all - a scalar after `is` - as the
+heritage list does (a type position's "never listed"):
 
 | Context | Example | Fits | State |
 |---|---|---|---|
 | a declaration | `Name: \|` | any type | done |
-| a generic argument | `TList<\|>`, `Foo<\|>(...)` | what the parameter's constraint admits: `class` - classes; `record` - value types; `constructor` - classes with a parameterless constructor; a class or interface - its descendants or implementors | planned |
-| `is` / `as` | `if Sender is \|` | descendants of the left side's static type (and interfaces after `as`) | planned |
-| an exception handler | `on E: \|` | exception classes | planned |
+| a generic argument | `TList<\|>`, `TDictionary<string, \|>`, `Foo<\|>(...)` | what the parameter's constraint admits: `class` - classes; `record` - value types (a record, an ordinal, a float, a set); `constructor` - classes (dcc 37 accepts every class, whatever its own `Create` takes, and no record); a class - its descendants; an interface - its descendants and the classes listing it (another class leads: an interface it lists may descend from it); several constraints - what all admit. What a constraint rejects is fit 3; no constraint ranks nothing. No value | 0.84.16 (`Foo<\|` on a name that is no generic stays a comparison) |
+| `is` / `as`, `is not` | `if Sender is \|`, `Sender as \|` | after a class: its descendants; the class itself and its ancestors lead (the test is true of any non-nil value); an unrelated class is fit 3 (E2010). After an interface: any class. An interface after `as`; after `is` it is fit 3 - dcc 37 rejects `X is IFoo` whatever X is (E2015). A class-reference value (`Sender is AClass`, a function returning one) fits; no other value, no routine, no type of another category | 0.84.16 (`as` to an interface from a class implementing none - TObject - is E2015 too, not told apart; a left side the engine cannot type ranks nothing) |
+| an exception handler | `on E: \|`, `on \|` | Exception's descendants; another class is fit 3; no value, no type of another category | 0.84.16 (Exception is the class of that name the caret's unit can see - without SysUtils nothing is ranked) |
 | a heritage list | `class(\|)` | classes first, then interfaces | done (types alone) |
-| a generic constraint | `<T: \|>` | `class`, `record`, `constructor`, classes, interfaces | planned |
-| an attribute | `[\|]` before a declaration | TCustomAttribute descendants | planned |
+| a generic constraint | `<T: \|>`, `<T: class, \|>` | the keywords `class`, `record`, `constructor` first (fit 0), then classes and interfaces (fit 1); no type of another category, no value. `<A, \|>` names a parameter and is no constraint | 0.84.16 |
+| an attribute | `[\|]`, `[A, \|]` before a declaration, a member or a parameter | TCustomAttribute's descendants; another class is fit 3; no value, no type of another category. Listed under the declared name only (`TableAttribute`): dcc takes `[Table]` too, but the filter's start-of-name tier already finds `TableAttribute` for `Tab`, and one row per class keeps its hint and navigation. An argument (`[Foo(\|)]`) is an expression, a set constructor and an index keep their contexts | 0.84.16 (TCustomAttribute is the class of that name the caret's unit can see - System's in a real project) |
 
 A type NAME fits as a value where its type would (`X := TFoo(Y)`,
 `X := TFoo.Create`): the cast and the constructor both produce one.

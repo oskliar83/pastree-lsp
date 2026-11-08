@@ -423,7 +423,14 @@ const
   /// a default or a typed constant (`const C: T = |`) lists no variable
   /// and no function - an older library compiles and silently lists them,
   /// unranked.
-  cMinPasTreeVersion = '0.168.0';
+  /// 0.169.0 (2026-11-08): the type positions are ranked - `is` / `as`
+  /// (a descendant of the left side first, an unrelated class wrong), an
+  /// exception handler and an attribute (Exception's / TCustomAttribute's
+  /// descendants), a generic argument (what its constraint admits) and a
+  /// constraint (`class`, `record`, `constructor` first); each lists types
+  /// alone - an older library compiles and silently lists every value there,
+  /// unranked.
+  cMinPasTreeVersion = '0.169.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
