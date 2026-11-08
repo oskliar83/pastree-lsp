@@ -382,7 +382,11 @@ const
   /// not "leads" (`StringToGUID` where an enumeration is expected) - an
   /// older library compiles and silently ranks it above fitting names; an
   /// untyped Pointer where a class is expected leads rather than fits.
-  cMinPasTreeVersion = '0.160.2';
+  /// 0.161.0 (2026-11-08): a condition (`if |`, `while |`, `until |`,
+  /// `if not |`) expects a Boolean - no procedure listed, `Assigned` typed
+  /// Boolean - and an older library compiles and silently lists procedures
+  /// first there.
+  cMinPasTreeVersion = '0.161.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

@@ -83,7 +83,7 @@ Value positions:
 | ... an untyped or generic parameter | `FillChar(\|`, `Max<T>(\|` | no context | procedures | - |
 | a value typecast | `Int64(\|)`, `TFoo(\|)` | the cast's family: any ordinal (integer, enumeration, Char, Boolean) for an ordinal type; a class, interface or pointer for a class or pointer type | procedures | planned |
 | `Exit(\|)` | | the routine's result type | procedures | planned |
-| a condition | `if \|`, `while \|`, `until \|`, `not \|` | Boolean | procedures | planned |
+| a condition | `if \|`, `while \|`, `until \|`, `if not \|` | Boolean; an intrinsic by its fixed result (`Assigned`, `Odd`) | procedures | 0.84.8 (a `not` elsewhere, an `and`/`or` operand: planned) |
 | a `case` selector | `case \| of` | any ordinal | procedures | planned |
 | a `case` label | `case K of \|:` | constants of K's type | variables, functions, procedures - a label is a constant expression | planned |
 | `for` bounds | `for I := \| to \|` | I's type | procedures | planned |
