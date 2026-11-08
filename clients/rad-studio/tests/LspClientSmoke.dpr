@@ -2011,6 +2011,28 @@ begin
   Check(GOk and LSelfRow.Contains('"detail":": TGdBox<TVal>"'),
     'the Self row shows the method''s class: ' + LSelfRow);
 
+  // `inherited ` with its blank in virtual space: RAD Studio keeps no
+  // trailing blank, so the buffer holds `  inherited` and the caret stands a
+  // column right of it - the whole statement list came back (2026-11-08).
+  // A function's last statement, unterminated, `end;` on the next line.
+  var LInhFile := TPath.Combine(GFixtureDir, 'DemoInherited.pas');
+  var LInhOrig := TFile.ReadAllText(LInhFile);
+  var LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhOrig),
+    'Result := ''Derived: '' + AName;', ['  inherited']));
+  SendDidChange(LInhFile, LInhText);
+  FindPosInText(LInhText, 'Result := ''Derived: '' + AName;', 'Result',
+    LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine + 1,
+    Length('  inherited') + 1)),
+    'completion answered a column past `inherited` at the line''s end');
+  Check(GOk and GResultJson.Contains('"label":"Greet"') and
+    GResultJson.Contains('"label":"Init"') and
+    not GResultJson.Contains('"label":"Self"') and
+    not GResultJson.Contains('"label":"Result"') and
+    not GResultJson.Contains('"label":"AName"'),
+    'virtual space after `inherited` lists the ancestor''s methods alone');
+  SendDidChange(LInhFile, LInhOrig);
+
   FindPos(LUseFile, 'ABox.GdArr', 'GdArr', LLine, LChar);
   Check(Ask('textDocument/completion',
     PositionParams(LUseFile, LLine, LChar)),

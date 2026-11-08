@@ -461,7 +461,11 @@ const
   /// 0.173.1 (2026-11-08): `Self` is typed - a value of the method's type,
   /// a class reference in a class method - and IsSelfItem / SelfTypeText
   /// give its row's detail; an older library ranks Self fit 3, last.
-  cMinPasTreeVersion = '0.173.1';
+  /// 0.173.2 (2026-11-08): CaretSource fills a caret's virtual space with
+  /// the blanks the editor does not keep - an older library reads
+  /// `inherited` + a virtual blank as the prefix `inherited` and silently
+  /// lists the whole statement list.
+  cMinPasTreeVersion = '0.173.2';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
