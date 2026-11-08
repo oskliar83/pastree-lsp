@@ -78,9 +78,9 @@ Value positions:
 | comparison | `if X = \|`, `<>` `<` `>` `<=` `>=` | comparable with X | procedures | 0.84 |
 | a member chain in either | `X := Obj.\|` | the same, for the chain's last member | procedures | 0.84 |
 | an inline variable's initializer | `var X: T := \|` | assignable to T - the assignment, with the type written out | procedures | 0.84 |
-| a call argument | `Foo(A, \|)` | assignable to that parameter; over overloads, the best fit among those taking this many arguments | procedures | planned |
-| ... a `var`/`out` argument | `Inc(\|)`, `TryStrToInt(S, \|)` | a variable of exactly that type | constants, functions, procedures | planned |
-| ... an untyped or generic parameter | `FillChar(\|`, `Max<T>(\|` | no context | procedures | - |
+| a call argument | `Foo(A, \|)` | assignable to that parameter; over overloads, the best fit for the arguments written among those taking at least this many; an intrinsic by its table signature (`Assert(\|` a Boolean) | procedures | 0.84.9 (an argument naming another unit's enumeration constant does not yet pick the overload) |
+| ... a `var`/`out` argument | `Inc(\|)`, `TryStrToInt(S, \|)` | a variable of exactly that type (an intrinsic's has none: `Inc` takes any ordinal); a property is fit 3 or leads | constants, functions, procedures | 0.84.9 |
+| ... an untyped or generic parameter | `FillChar(\|`, `Max<T>(\|` | no context (an open array too) | procedures | 0.84.9 |
 | a value typecast | `Int64(\|)`, `TFoo(\|)` | the cast's family: any ordinal (integer, enumeration, Char, Boolean) for an ordinal type; a class, interface or pointer for a class or pointer type | procedures | planned |
 | `Exit(\|)` | | the routine's result type | procedures | planned |
 | a condition | `if \|`, `while \|`, `until \|`, `if not \|` | Boolean; an intrinsic by its fixed result (`Assigned`, `Odd`) | procedures | 0.84.8 (a `not` elsewhere, an `and`/`or` operand: planned) |

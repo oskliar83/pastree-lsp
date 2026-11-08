@@ -386,7 +386,12 @@ const
   /// `if not |`) expects a Boolean - no procedure listed, `Assigned` typed
   /// Boolean - and an older library compiles and silently lists procedures
   /// first there.
-  cMinPasTreeVersion = '0.161.0';
+  /// 0.162.0 (2026-11-08): a call argument (`Foo(A, |)`) expects its
+  /// parameter's type over the best-fitting overload, a `var` / `out` one a
+  /// variable of exactly that type (no constant, function or procedure) - an
+  /// older library compiles and silently lists procedures and constants
+  /// there, unranked.
+  cMinPasTreeVersion = '0.162.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
