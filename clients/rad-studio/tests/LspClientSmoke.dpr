@@ -2048,6 +2048,25 @@ begin
     'the parameter list takes the argument as the result type does');
 end;
 
+// The sortText of the completion item labelled ALabel in GResultJson, ''
+// when it is not listed - the server writes label, kind, detail, sortText.
+function SortTextOf(const ALabel: string): string;
+var
+  LAt, LEnd: Integer;
+begin
+  Result := '';
+  LAt := Pos('"label":"' + ALabel + '"', GResultJson);
+  if LAt = 0 then
+    Exit;
+  LAt := Pos('"sortText":"', GResultJson, LAt);
+  if LAt = 0 then
+    Exit;
+  Inc(LAt, Length('"sortText":"'));
+  LEnd := Pos('"', GResultJson, LAt);
+  if LEnd > LAt then
+    Result := Copy(GResultJson, LAt, LEnd - LAt);
+end;
+
 { 5b-ter. The right side of a comparison: the values of the left side's type
   rank first (sortText leads with the match, data carries it for the RAD
   list), the others after, and a procedure is no operand at all. }
@@ -2062,14 +2081,23 @@ begin
   FindPos(LFile, 'if LColor = ecRed', 'ecRed', LLine, LChar);
   Check(Ask('textDocument/completion', PositionParams(LFile, LLine, LChar)),
     'completion answered on the right side of a comparison');
-  Check(GOk and GResultJson.Contains('"sortText":"004ecred"'),
+  Check(GOk and GResultJson.Contains('"sortText":"0004ecred"'),
     'a value of the left side''s enumeration sorts first');
   Check(GOk and GResultJson.Contains('"match":0'),
     'the item''s data carries the exact match');
-  Check(GOk and GResultJson.Contains('"sortText":"304esround"'),
+  Check(GOk and GResultJson.Contains('"sortText":"3004esround"'),
     'a value of another enumeration sorts last, proven wrong');
   Check(GOk and not GResultJson.Contains('"label":"ExpReset"'),
     'a procedure is not listed as an operand');
+  // 0.85.0: the digit after the match grades the conversion - for a
+  // Double a Single (0) before an Integer (2) before a Byte (4).
+  FindPos(LFile, 'LStamp := LSingle', 'LSingle', LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LFile, LLine, LChar)),
+    'completion answered on the right side of a Double assignment');
+  Check(GOk and (SortTextOf('LSingle').StartsWith('10')),
+    'a Single converts to a Double at grade 0: ' + SortTextOf('LSingle'));
+  Check(GOk and (SortTextOf('LByte').StartsWith('14')),
+    'a Byte converts to a Double at grade 4: ' + SortTextOf('LByte'));
 end;
 
 { 5c, continued. Every shape of a declaration whose type is not written -

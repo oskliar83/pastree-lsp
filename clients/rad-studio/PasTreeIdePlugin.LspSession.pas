@@ -206,10 +206,15 @@ type
     // may lead to it through `.` `[` `(`, 3 proven wrong or nothing expected
     // (data.match; absent = 3). The list's first sort key.
     Match: Integer;
+    // Inside "assignable" (Match 1): how near the value's conversion is, 0
+    // nearest - a Double before a Single before an Integer for a TDateTime
+    // (PasTree's TPasComplItem.Conv): the digit after the match in sortText,
+    // since 0.85.0. The list's second sort key.
+    Conv: Integer;
     // Where the name is declared, nearest first (locals, members, this unit,
-    // used units, System, ...): the two digits after the match in sortText
-    // (PasLsp.Completion.BucketSort); 99 from a server that sends none. The
-    // list's second sort key.
+    // used units, System, ...): the two digits after the match and the conv
+    // digit in sortText (PasLsp.Completion.BucketSort); 99 from a server
+    // that sends none. The list's third sort key.
     Bucket: Integer;
     // The declaration's XMLDoc as DISPLAY text, already rendered by the
     // server (PasLsp.XmlDoc): what Help Insight shows for the selected row.
@@ -3194,7 +3199,9 @@ begin
     LItem.HasParams := LObj.GetValue<Boolean>('data.hasParams', False);
     LItem.Match := LObj.GetValue<Integer>('data.match', 3);
     LSort := LObj.GetValue<string>('sortText', '');
-    if (Length(LSort) < 3) or not TryStrToInt(Copy(LSort, 2, 2), LItem.Bucket) then
+    if (Length(LSort) < 4) or not TryStrToInt(Copy(LSort, 2, 1), LItem.Conv) then
+      LItem.Conv := 0;
+    if (Length(LSort) < 4) or not TryStrToInt(Copy(LSort, 3, 2), LItem.Bucket) then
       LItem.Bucket := 99;
     // documentation is markdown-shaped per LSP, but OUR server sends the
     // already-rendered display text (no emphasis markers - see the server's

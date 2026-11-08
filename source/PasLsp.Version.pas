@@ -465,7 +465,11 @@ const
   /// the blanks the editor does not keep - an older library reads
   /// `inherited` + a virtual blank as the prefix `inherited` and silently
   /// lists the whole statement list.
-  cMinPasTreeVersion = '0.173.2';
+  /// 0.174.0 (2026-11-08): TPasComplItem.Conv grades a value that converts
+  /// (XConvDistX: a Double before a Single before an Integer for a
+  /// TDateTime, the nearer descendant class first), the sortText digit
+  /// after the match - an older library does not compile.
+  cMinPasTreeVersion = '0.174.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

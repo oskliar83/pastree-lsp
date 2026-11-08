@@ -285,12 +285,19 @@ end;
   bucket's ordinal next, the lower-cased name breaks ties - so clients that
   sort by sortText (VS Code) present the values that fit before the rest,
   each group in the engine's resolution-precedence order (members before
-  unit names before builtins before keywords). The RAD list sorts by the
-  match it reads from the item's data, then by name. }
-function BucketSort(AMatch: TPasComplMatch; ABucket: TPasComplBucket;
-  const AName: string): string;
+  unit names before builtins before keywords). Since 0.85.0 a digit between
+  the match and the bucket grades a value that converts (PasTree's
+  TPasComplItem.Conv, 0 nearest: a Double before a Single before an Integer
+  for a TDateTime) - `1` `4` `03` `name`. The RAD list sorts by the match
+  it reads from the item's data, then by this digit and the bucket it reads
+  from here (TPasSymbolList). }
+function BucketSort(AMatch: TPasComplMatch; AConv: Integer;
+  ABucket: TPasComplBucket; const AName: string): string;
 begin
-  Result := Format('%d%.2d%s', [Ord(AMatch), Ord(ABucket), LowerCase(AName)]);
+  if (AConv < 0) or (AConv > 9) then
+    AConv := 9;
+  Result := Format('%d%d%.2d%s', [Ord(AMatch), AConv, Ord(ABucket),
+    LowerCase(AName)]);
 end;
 
 { A declaration written over several lines, as one: every line break with the
@@ -1963,8 +1970,8 @@ begin
         end;
         LEntry.TypeSpans := DetailTypeSpans(LEntry.ItemLabel, LEntry.Detail,
           LItems[LIdx].Kind, LValueTypes);
-        LEntry.SortText := BucketSort(LItems[LIdx].Match, LItems[LIdx].Bucket,
-          LItems[LIdx].Name);
+        LEntry.SortText := BucketSort(LItems[LIdx].Match, LItems[LIdx].Conv,
+          LItems[LIdx].Bucket, LItems[LIdx].Name);
         LEntry.Match := Ord(LItems[LIdx].Match);
         Result.Items[LIdx] := LEntry;
       end;

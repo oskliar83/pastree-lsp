@@ -79,8 +79,8 @@ Value positions:
 
 | Context | Example | Fits | Never listed | State |
 |---|---|---|---|---|
-| assignment | `X := \|` | assignable to X's type | procedures | 0.84 |
-| comparison | `if X = \|`, `<>` `<` `>` `<=` `>=` | comparable with X; a longer left side (`if I + 1 = \|`, `A and B = \|`, a literal) by the type of the expression it is - `=` binds loosest | procedures | 0.84; a longer left side 0.84.20 |
+| assignment | `X := \|` | assignable to X's type. For a Boolean - here, in an argument, `Exit(`, a default or a constant, not in a condition or an operand of `and` / `or` / `not` - `True` and `False` before every other Boolean (Conv). `High` / `Low` / `Pred` / `Succ`, whose type their argument decides, are fit 1 wherever an ordinal or a number is read (`for I := 0 to High(A)`), not "leads" | procedures | 0.84; Boolean literals, `High` 0.85.0 |
+| comparison | `if X = \|`, `<>` `<` `>` `<=` `>=` | comparable with X; a longer left side (`if I + 1 = \|`, `A and B = \|`, a literal) by the type of the expression it is - `=` binds loosest. Inside a fit a constant - a true or typed constant, an enumeration value, `nil`, `True`, `False` - comes before a variable or a function (Conv), except the routine's own locals and parameters (`Status <> AStatus`): what a value is compared with is mostly a constant (`X = nil`, `K = kOne`) | procedures | 0.84; a longer left side 0.84.20; constants first 0.85.0 |
 | a member chain in either | `X := Obj.\|` | the same, for the chain's last member | procedures | 0.84 |
 | an inline variable's initializer | `var X: T := \|` | assignable to T - the assignment, with the type written out | procedures | 0.84 |
 | a call argument | `Foo(A, \|)` | assignable to that parameter; over overloads, the best fit for the arguments written among those taking at least this many; an intrinsic by its table signature (`Assert(\|` a Boolean) | procedures | 0.84.9; an argument naming another unit's enumeration value picks the overload 0.84.21 |
@@ -92,7 +92,7 @@ Value positions:
 | ... an operand of `and` / `or` / `xor` | `if A and \|`, `while (X > 0) or \|`, `I and \|` | the left operand's type when it is a Boolean (logical) or an integer (bitwise), else none; `and` binds tighter than `=`, so in `if A = B and \|` B decides | procedures | 0.84.14; a left operand longer than a designator (`X * Y and \|`: the product) 0.84.20 |
 | ... `not` | `X := not \|`, `Foo(not \|)`, `A and not \|` | what the `not` stands for: a Boolean where a Boolean or nothing is expected, the integer type where an integer is (a bitwise not), none elsewhere | procedures | 0.84.14 |
 | ... a grouping paren | `if (\|`, `if (A) and (\|`, `X := (\|` | what the position of its `(` expects; a call's or a cast's `(` and a record or array constant's are their own | as that position | 0.84.14 |
-| a `case` selector | `case \| of` | any ordinal (integer, enumeration, Char, Boolean) is fit 1; a float, a string, a set fit 3; a value with members leads | procedures | 0.84.10 |
+| a `case` selector | `case \| of` | any ordinal (integer, enumeration, Char, Boolean) is fit 1; a float, a set fit 3; a value with members leads, and so does a string value, after the others (`case S[I] of` selects by a Char; the type name `string` stays fit 3) | procedures | 0.84.10; a string leads 0.85.0 |
 | a `case` label | `case K of \|:`, after `,` and `..` in a label list, a later arm's label | constants of K's type | variables, typed constants, functions, procedures - a label is a constant expression (the intrinsics one may call stay: `Ord`, `High`, `SizeOf`) | 0.84.10 |
 | `for` bounds | `for I := \| to \|`, `downto \|` | I's type; an inline `for var I :=` with no declared type expects nothing | procedures | 0.84.11 |
 | `for ... in` | `for X in \|` | what can be enumerated: an array, a set, a string, a class or record with GetEnumerator; where X has a declared type, the collection whose element is that type first, one whose element converts to it next, one whose element does not leads; a value with members leads, a scalar is wrong | procedures | 0.84.11 (a class or record helper's GetEnumerator counts; one helping an ordinal type does not, as dcc 37 rejects `for X in K` there too - E2430; `for var X in` ranks every collection alike) |
@@ -100,15 +100,15 @@ Value positions:
 | a set element | `S := [\|]`, `K in [\|`, after `,` and `..` in the brackets, `Include(S, \|)` | the set's element type; after `in` the type of K; a dynamic array's element (`Arr := [\|]`), an open array argument's (`Foo([\|])`) | procedures (an array of a procedural type keeps them) | 0.84.12; an operand of `+` / `-` / `*` (`S + [\|`, `Arr + [\|`: the left operand's element) 0.84.20 |
 | an operand of an operator | `X := A + \|`, `-` `*` `/` `div` `mod` `shl` `shr` | the left operand's family. A number: after `+` `-` `*` `/` its own type is fit 0, any other integer or float fit 1; `div` `mod` `shl` `shr` want an integer - its type, a float is fit 3. A string or Char after `+`: a string (a Char converts). A set after `+` `-` `*`: the set. A dynamic array after `+`: itself. A typed pointer after `+` `-`: an integer; an untyped Pointer nothing (dcc 37: `P + 1` is E2015). A record: the right parameter of its `class operator` for that operator, the record being the first. The left operand is the expression precedence makes it (`*` `/` `div` `mod` `and` `shl` `shr` above `+` `-` `or` `xor` above the comparisons, left to right within a level): in `A + B * \|` B, in `if A = B + \|` B, in `A - B + \|` the difference - typed by the analysis's operator table over names, member chains, calls, literals and grouping parens. A sign (`X := -\|`) stands for what its own position expects: an integer, a float with any number fitting | procedures | 0.84.20 (`and` / `or` / `xor`: 0.84.14, under the condition). Not yet: a record whose overloads of the operator take different right types ranks nothing; a typed pointer without POINTERMATH (`PInteger`) ranks an integer though dcc rejects the sum; a set constructor or `@X` as a left operand is not typed - nothing is ranked |
 | `with \| do` | `with A, \| do` | a value with members: a class, a record, an interface, a class reference, a class name (dcc 37 takes `with TFoo do` with class members or none); a record type's name leads when the type names a member - a class var, a class or static method, a constructor, a class property (`with TRec.Make do`) - and is fit 3 without one, since the bare name is E2029; a pointer or an array leads, a scalar is fit 3 | procedures | 0.84.15; a type's name 0.84.21 |
-| `raise \|` | | an exception instance: a class descending from Exception fits - a variable, a function, the class name (`EFoo.Create`); another class leads, a scalar is fit 3; `raise` alone stays legal | procedures | 0.84.15 (Exception is the class of that name the caret's unit can see: without SysUtils every class fits) |
+| `raise \|` | | an exception instance: a class descending from Exception fits - a variable, a function, the class name (`EFoo.Create`), the nearer to Exception first (Conv: Exception itself, then its children, 0.85.0); another class leads, a scalar is fit 3; `raise` alone stays legal | procedures | 0.84.15 (Exception is the class of that name the caret's unit can see: without SysUtils every class fits) |
 | `raise X at \|` | | an address: a pointer fits - an untyped or a typed one, `nil`; any other scalar is fit 3 (dcc 37: E2017 for an integer too), an object or a record leads | procedures | 0.84.21 |
 | a default parameter value, a typed constant | `(A: Integer = \|)`, `const C: T = \|`, an initialized global `var G: T = \|` | constants of the type | variables, typed constants, functions, procedures - a constant expression (the intrinsics one may call stay: `Ord`, `High`, `SizeOf`); a procedural type's constant keeps the routines | 0.84.15 (an inline `var X: T := \|` is no constant and keeps them) |
-| a static array's bounds | `array[\|] of`, `array[TKind, \|]`, `array[0..\|]`, `packed array[\|]`, a field's or an inline variable's | any ordinal: an ordinal type (an enumeration, a subrange, Integer, Boolean, Char) or an ordinal constant is fit 1, a type or a constant of another scalar kind fit 3; after `..` a constant of the low bound's type, as a `case` label (an integer literal's Integer, a one-character literal's Char) | variables, typed constants, functions, procedures - a constant expression (the intrinsics one may call stay: `High`, `Low`, `Ord`, `SizeOf`, `Pred`, `Succ`) | 0.84.17 (a value's index `A[\|]` and a set constructor keep their own rows) |
+| a static array's bounds | `array[\|] of`, `array[TKind, \|]`, `array[0..\|]`, `packed array[\|]`, a field's or an inline variable's | any ordinal: an ordinal type (an enumeration, a subrange, Integer, Boolean, Char) is fit 0 where a whole range may stand (not after `..`: the commonest bound, 0.85.0), an ordinal constant fit 1, a type or a constant of another scalar kind fit 3; after `..` a constant of the low bound's type, as a `case` label (an integer literal's Integer, a one-character literal's Char) | variables, typed constants, functions, procedures - a constant expression (the intrinsics one may call stay: `High`, `Low`, `Ord`, `SizeOf`, `Pred`, `Succ`) | 0.84.17 (a value's index `A[\|]` and a set constructor keep their own rows) |
 | a subrange's high bound | `T = clRed..\|`, `var X: 0..\|` | a constant of the low bound's type; any ordinal when the low bound cannot be typed | as a static array's bounds | 0.84.17 (a low bound longer than one name or literal - `Ord('A') + 1..\|` - expects any ordinal) |
 | an event or method pointer, a procedural variable or parameter | `OnClick := \|`, `P := \|`, `Foo(\|` for a procedural parameter | a routine whose signature the type takes is fit 0 - `of object` a method, a plain type a plain routine (or a static class method), `reference to` either; a procedure of another signature or kind is fit 3; a function that does not fit is judged by its result | - | 0.84.15 (a routine only the buffer declares, since the last analysis, leads: no signature to compare yet) |
 | a property accessor | `property P: T read \|`, `write \|`, `stored \|` | the class's own and inherited members, visibility applied. Fit 0 (each rule dcc 37-probed): a field of exactly T and a `function: T` after `read`; a field of T and a `procedure(Value: T)` taking it by value or `const` after `write`; a Boolean field, a parameterless Boolean function, `True` / `False` after `stored`. An array property's methods take its index parameters first - the same types and the same modes (`const I` for `I` is E2008) - and `index N` adds an Integer after them (by value or `const`; a `stored` function takes that Integer alone); a non-static class function serves an instance property. A record field leads (`read FRec.X` compiles). Fit 3: the same shape of another type (E2010 / E2008), a `var` / `out` value (E2282), a field for an array property, a class var or a static class method for an instance property (E2356), anything but a class var or a static class method for a `class property` (E2355). A member of the right shape and the wrong type stays listed: pastree-lsp's class completion asks this list whether a name is already a member | procedures after `read` / `stored`, functions after `write`; properties, constructors, types; anything outside the class (another unit's private members included) | 0.84.18; a property redeclaring an inherited one without a type (`property Foo read \|`) ranks by the inherited property's type 0.84.21 (an inherited array property has nothing to compare: every member leads) |
 | a property's `default` / `index` | `property P: T read F default \|`, `index \|` | constants of T; of Integer | variables, typed constants, functions, procedures - a constant expression | 0.84.18 |
-| `inherited` | `inherited \|` in a method body | the ancestors' methods and properties (dcc 37: `X := inherited Prop` compiles; a field, a type, a constant is E2096). The enclosing method's own name is fit 0 - what a bare `inherited` calls, `inherited Create` in a constructor; every other one is fit 1. In a class method an instance method or property is fit 3 (dcc 37: E2076, E2233); a class method, a static one, a class property and a constructor stay fit 1. `inherited Foo(\|` is a call argument | fields, variables, types, constants, global routines, the class's own new methods; outside a method body nothing | 0.84.18; a class method 0.84.21 |
+| `inherited` | `inherited \|` in a method body | the ancestors' methods and properties (dcc 37: `X := inherited Prop` compiles; a field, a type, a constant is E2096). The enclosing method's own name is fit 0 - what a bare `inherited` calls, `inherited Create` in a constructor - and in a constructor so is every ancestor's constructor (`inherited Create(AOwner)` from `CreateNew`, 0.85.0); every other one is fit 1. In a class method an instance method or property is fit 3 (dcc 37: E2076, E2233); a class method, a static one, a class property and a constructor stay fit 1. `inherited Foo(\|` is a call argument | fields, variables, types, constants, global routines, the class's own new methods; outside a method body nothing | 0.84.18; a class method 0.84.21 |
 
 Type positions (types alone are listed; the context ranks them). A type
 item's fit is decided by its own type, not as a value: fit 1 where the
@@ -123,7 +123,7 @@ heritage list does (a type position's "never listed"):
 | a declaration | `Name: \|` | any type | done |
 | a generic argument | `TList<\|>`, `TDictionary<string, \|>`, `Foo<\|>(...)` | what the parameter's constraint admits: `class` - classes; `record` - value types (a record, an ordinal, a float, a set); `constructor` - classes (dcc 37 accepts every class, whatever its own `Create` takes, and no record); a class - its descendants; an interface - its descendants and the classes listing it (another class leads: an interface it lists may descend from it); several constraints - what all admit. What a constraint rejects is fit 3; no constraint ranks nothing. No value | 0.84.16 (`Foo<\|` on a name that is no generic stays a comparison) |
 | `is` / `as`, `is not` | `if Sender is \|`, `Sender as \|` | after a class: its descendants; the class itself and its ancestors lead (the test is true of any non-nil value); an unrelated class is fit 3 (E2010). After an interface: any class. An interface after `as`; after `is` it is fit 3 - dcc 37 rejects `X is IFoo` whatever X is (E2015). A class-reference value (`Sender is AClass`, a function returning one - Self's `ClassType` too; dcc 37 takes it) leads, below the types (0.84.19); no other value - a constant only of a class-reference type (0.84.19: a unit's string constant was listed), no routine, no type of another category | 0.84.16 (`as` to an interface from a class implementing none - TObject - is E2015 too, not told apart; a left side the engine cannot type ranks nothing) |
-| an exception handler | `on E: \|`, `on \|` | Exception's descendants; another class is fit 3; no value, no type of another category | 0.84.16 (Exception is the class of that name the caret's unit can see - without SysUtils nothing is ranked) |
+| an exception handler | `on E: \|`, `on \|` | Exception's descendants, the nearer first (Conv: Exception itself, then its children - 0.85.0); another class is fit 3; no value, no type of another category | 0.84.16 (Exception is the class of that name the caret's unit can see - without SysUtils nothing is ranked) |
 | a heritage list | `class(\|)` | classes first, then interfaces | done (types alone) |
 | `implements` | `property P: IFoo read FFoo implements \|`, `implements IA, \|` | interfaces alone (dcc 37: a class there is E2205, also for a class-typed property). Those the class's own heritage list names and the property's own type are fit 0; any other interface fit 1, though dcc rejects one the heritage list does not name (E2265 - an ancestor's list does not count) and, for an interface-typed property, one its type does not descend from (E2010). No value, no other type | 0.84.17 (an interface declared since the last analysis cannot be compared: fit 1) |
 | a helper's type | `class helper for \|`, `record helper for \|`, `class helper(THlp) for \|` | a class helper: classes (E2021 otherwise). A record helper: a record or a simple type - an ordinal, a subrange, a float, a string, a set, a pointer, a dynamic array, a Variant; dcc 37 rejects a static array, a procedural type, an interface, a class and a class reference (E2474), which are not listed. Every type listed is fit 1; no value, no routine, no keyword | 0.84.17 |
@@ -148,14 +148,37 @@ A type NAME fits as a value where its type would (`X := TFoo(Y)`,
 - **Proximity** - where the name is declared, nearest first: locals and
   parameters, members of the class the caret is in, this unit, used units,
   System. The server already sends it as the second key of `sortText`.
+- **Conv** (since 0.85.0) - inside a fit, how near the value is to what
+  the position wants, 0 nearest (PasTree's `TPasComplItem.Conv`, the
+  `sortText` digit after the match). For a value that converts it is read
+  off the tables overload resolution ranks by (`XConvDistX`): each
+  argument kind's row ranks its own type highest and every target below
+  it, so the distance is that row's top less its entry at the target,
+  halved (a step of one is no reason to bury a nearer-declared name) - for
+  a `TDateTime` (a Double) a Double and a Single 0, an Integer 2, a Byte
+  4; for an Int64 an Integer 0, a Word 1, a Byte 2; a Variant last (9); a
+  value of no conversion kind where the target has one (an enumeration
+  value where an index takes any ordinal) 8; a true constant of the
+  target's own category (`N = 5` for an Int64) 0, as it takes the type it
+  meets - an integer one for a float stays an integer (`NOERROR` after
+  `Norm` for a `TDateTime`). A class is
+  graded by its hops to Exception in an exception handler and after
+  `raise` (Exception itself first) and nowhere else: measured, the object
+  assigned, compared or tested with `is` / `as` is as often a deep class
+  as a near one (`Sender = actSave`, `Sender as TStringGrid` from a
+  TObject), and nearer-first buried those. Context rules use it too: a
+  Boolean's `True` / `False` first outside a condition; a comparison's
+  constant first, though not over the routine's own locals and
+  parameters; a `case` selector's string after the other values that
+  lead.
 
 ### The rules
 
 | # | Context | Filter | What is listed | Order |
 |---|---|---|---|---|
 | A | no | no | everything reachable from the position | proximity, name |
-| B | yes | no | everything reachable, less what the context never lists | fit, proximity, name - fit 3 last |
-| C | any | yes | every name the filter matches (tiers 1 to 4 below; tier 1 and 2 alone when the IDE's "contain filter" option is off), less what the context never lists | fit 3 last (with a context); above it and inside it: match tier, then fit, proximity, name |
+| B | yes | no | everything reachable, less what the context never lists | fit, conv, proximity, name - fit 3 last |
+| C | any | yes | every name the filter matches (tiers 1 to 4 below; tier 1 and 2 alone when the IDE's "contain filter" option is off), less what the context never lists | fit 3 last (with a context); above it and inside it: match tier, then fit, conv, proximity, name |
 
 The match tiers of rule C (the tiers VS Code and Roslyn rank a filtered list by):
 
@@ -204,6 +227,59 @@ A match at a word start inside the name (`pkStripe` for `str`) counted as a
 start-of-name match was also measured and is worse than both (1 letter, after
 a dot: 64%): every capital is a word start, so one letter matches nearly
 everything.
+
+### Measured (all contexts, 2026-11-08)
+
+local/cc-sim `sim2.js` replays every context above on two corpora - this
+repository's server and PasTree units ("own", 7 files) and a large
+project's 51 units ("large", Win32) - at most 60 sites per context each,
+the head of the identifier with 0 and 2 letters typed, ordered exactly as
+the plugin orders (rule B, rule C). Cells: top 1 / top 5, 0.84.23 -> 0.85.0
+(the conversion grade and the context rules of 0.85.0). A blank: fewer than
+5 sites.
+
+| Context | own, nothing typed | own, 2 letters | large, nothing typed | large, 2 letters |
+|---|---|---|---|---|
+| assignment | 7% / 13% -> 12% / 22% | 50% / 75% -> 57% / 78% | 12% / 33% -> 12% / 35% | 48% / 67% -> 50% / 68% |
+| comparison | 2% / 17% -> 3% / 22% | 25% / 75% -> 25% / 75% | 12% / 35% -> 13% / 48% | 55% / 67% -> 60% / 70% |
+| call argument | 12% / 45% -> 12% / 45% | 59% / 88% -> 59% / 88% | 17% / 38% -> 18% / 43% | 52% / 73% -> 57% / 77% |
+| `var` argument | 5% / 45% -> 5% / 45% | 78% / 97% -> 78% / 97% | 9% / 30% -> 9% / 30% | 64% / 92% -> 64% / 92% |
+| value typecast | 20% / 32% -> 20% / 32% | 56% / 76% -> 56% / 76% | 38% / 57% -> 38% / 57% | 63% / 78% -> 63% / 78% |
+| `Exit(` | 2% / 7% -> 13% / 42% | 27% / 62% -> 60% / 85% |  |  |
+| condition | 0% / 0% -> 0% / 0% | 63% / 90% -> 63% / 90% | 3% / 7% -> 3% / 7% | 42% / 67% -> 42% / 67% |
+| `and` / `or` operand | 5% / 13% -> 5% / 13% | 60% / 91% -> 60% / 91% | 2% / 8% -> 2% / 8% | 45% / 68% -> 45% / 68% |
+| `not` operand | 25% / 47% -> 25% / 47% | 62% / 87% -> 62% / 87% | 3% / 11% -> 3% / 11% | 53% / 75% -> 53% / 75% |
+| `case` selector | 5% / 13% -> 5% / 13% | 62% / 81% -> 64% / 83% | 5% / 37% -> 5% / 37% | 53% / 63% -> 53% / 63% |
+| `case` label | 7% / 15% -> 7% / 15% | 7% / 15% -> 7% / 15% | 20% / 92% -> 20% / 92% | 20% / 92% -> 20% / 92% |
+| `for` bounds | 7% / 10% -> 7% / 10% | 20% / 83% -> 20% / 85% | 0% / 8% -> 0% / 8% | 20% / 50% -> 23% / 60% |
+| `for ... in` | 33% / 60% -> 33% / 60% | 78% / 97% -> 78% / 97% | 50% / 75% -> 50% / 75% | 85% / 95% -> 85% / 95% |
+| index | 13% / 52% -> 13% / 52% | 75% / 90% -> 75% / 90% | 48% / 67% -> 48% / 67% | 66% / 82% -> 66% / 82% |
+| set element | 12% / 33% -> 12% / 33% | 50% / 74% -> 50% / 74% | 7% / 50% -> 7% / 52% | 28% / 72% -> 28% / 72% |
+| operator operand | 20% / 43% -> 20% / 43% | 75% / 93% -> 75% / 93% | 3% / 22% -> 3% / 22% | 45% / 77% -> 45% / 77% |
+| `raise` | 14% / 14% -> 14% / 29% | 43% / 43% -> 43% / 43% | 0% / 0% -> 0% / 75% | 75% / 75% -> 75% / 100% |
+| `is` / `as` |  |  | 0% / 8% -> 0% / 8% | 10% / 25% -> 10% / 25% |
+| exception handler | 0% / 0% -> 89% / 89% | 89% / 100% -> 89% / 100% |  |  |
+| `inherited` | 100% / 100% -> 100% / 100% | 100% / 100% -> 100% / 100% | 67% / 67% -> 78% / 78% | 79% / 79% -> 79% / 79% |
+| typed constant | 38% / 74% -> 71% / 76% | 91% / 97% -> 91% / 97% | 0% / 9% -> 0% / 9% | 36% / 50% -> 36% / 50% |
+| default parameter | 50% / 90% -> 70% / 90% | 90% / 100% -> 90% / 100% | 3% / 38% -> 28% / 60% | 90% / 93% -> 90% / 93% |
+| array bound | 0% / 0% -> 19% / 25% | 25% / 31% -> 25% / 38% | 20% / 30% -> 30% / 30% | 80% / 80% -> 80% / 80% |
+| attribute |  |  | 0% / 0% -> 0% / 0% | 100% / 100% -> 100% / 100% |
+| `type T =` | 0% / 0% -> 0% / 0% | 0% / 100% -> 0% / 100% | 3% / 8% -> 3% / 8% | 27% / 43% -> 27% / 43% |
+| property accessor |  |  | 52% / 87% -> 52% / 87% | 82% / 98% -> 82% / 98% |
+| declaration type | 0% / 0% -> 0% / 0% | 22% / 25% -> 22% / 25% | 2% / 2% -> 2% / 2% | 17% / 28% -> 17% / 28% |
+| generic argument | 0% / 0% -> 0% / 0% | 17% / 27% -> 17% / 27% | 0% / 6% -> 0% / 6% | 22% / 61% -> 22% / 61% |
+| heritage list | 0% / 0% -> 0% / 0% | 60% / 100% -> 60% / 100% | 3% / 12% -> 3% / 12% | 15% / 42% -> 15% / 42% |
+
+Where nothing ranks (a declaration's type, a generic argument without a
+constraint, a heritage list) the name decides alone. Left as measured: after
+`is` / `as` from a TObject every class fits and the one meant is anywhere
+in the hierarchy; a `case` label, a set element or an enumeration compared
+are values of one type ordered by name; in a condition every Boolean is
+fit 0. None of these has a type rule to add. Two orders were tried and
+dropped (0.85.0): a class graded by its distance outside a handler and
+`raise` (`Sender = actSave`, a deep TAction for a TObject, fell from row
+89 to 1519), and constants first in a comparison over the routine's own
+parameters (`Status <> AStatus`).
 
 ### Open decisions
 

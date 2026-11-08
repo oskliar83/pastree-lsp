@@ -944,6 +944,9 @@ begin
       function(const A, B: TLspCompletionItem): Integer
       begin
         Result := A.Match - B.Match;
+        // Inside a fit, the nearer conversion first (COMPLETION.md, "Conv").
+        if Result = 0 then
+          Result := A.Conv - B.Conv;
         if Result = 0 then
           Result := A.Bucket - B.Bucket;
         if Result = 0 then
