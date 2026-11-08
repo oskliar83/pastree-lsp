@@ -410,7 +410,13 @@ const
   /// ordinal for an ordinal type, any reference for a class, interface or
   /// pointer type - and lists no procedure; an older library compiles and
   /// silently lists procedures there, unranked.
-  cMinPasTreeVersion = '0.166.0';
+  /// 0.167.0 (2026-11-08): an operand of `and` / `or` / `xor` (`if A and |`)
+  /// expects the left one's Boolean or integer type, a `not` anywhere
+  /// (`X := not |`) a Boolean or the integer expected around it, a
+  /// grouping paren (`if (|`, `if (A) and (|`) what its position expects -
+  /// an older library compiles and silently lists procedures there,
+  /// unranked.
+  cMinPasTreeVersion = '0.167.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
