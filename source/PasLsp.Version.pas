@@ -400,7 +400,12 @@ const
   /// expects the counter's type, and a for-in collection (`for X in |`)
   /// what can be enumerated, its element of X's type first - an older
   /// library compiles and silently lists procedures there unranked.
-  cMinPasTreeVersion = '0.164.0';
+  /// 0.165.0 (2026-11-08): an index (`A[|]`, `Dict[|]`, `M[I, |]`) expects
+  /// its index type, a set constructor's element (`S := [|]`, `K in [|`,
+  /// `Include(S, |)`) the set's base, an open array argument (`Foo([|])`)
+  /// its element - an older library compiles and silently lists procedures
+  /// there unranked.
+  cMinPasTreeVersion = '0.165.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
