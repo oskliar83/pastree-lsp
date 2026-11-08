@@ -436,7 +436,13 @@ const
   /// words before a subrange's bounds, a static array's bounds and a
   /// subrange's high bound a constant expression - an older library
   /// compiles and silently lists variables and routines there, unranked.
-  cMinPasTreeVersion = '0.170.0';
+  /// 0.171.0 (2026-11-08): a property accessor (`read |`, `write |`,
+  /// `stored |`) ranks the members by the accessor's signature - the field
+  /// of the property's type, the getter, the setter first, other types last
+  /// - and `inherited |` ranks the enclosing method's own name first and
+  /// lists nothing outside a method - an older library compiles and
+  /// silently lists them unranked.
+  cMinPasTreeVersion = '0.171.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
