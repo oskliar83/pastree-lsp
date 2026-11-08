@@ -442,7 +442,11 @@ const
   /// - and `inherited |` ranks the enclosing method's own name first and
   /// lists nothing outside a method - an older library compiles and
   /// silently lists them unranked.
-  cMinPasTreeVersion = '0.171.0';
+  /// 0.171.1 (2026-11-08): after `is` / `as` a constant is listed only when
+  /// it holds a class reference, and a class-reference value (`ClassType`)
+  /// ranks below the types - an older library compiles and silently lists a
+  /// unit's string constant there, Self's `ClassType` first.
+  cMinPasTreeVersion = '0.171.1';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
