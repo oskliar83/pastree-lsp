@@ -86,8 +86,8 @@ Value positions:
 | a condition | `if \|`, `while \|`, `until \|`, `if not \|` | Boolean; an intrinsic by its fixed result (`Assigned`, `Odd`) | procedures | 0.84.8 (a `not` elsewhere, an `and`/`or` operand: planned) |
 | a `case` selector | `case \| of` | any ordinal (integer, enumeration, Char, Boolean) is fit 1; a float, a string, a set fit 3; a value with members leads | procedures | 0.84.10 |
 | a `case` label | `case K of \|:`, after `,` and `..` in a label list, a later arm's label | constants of K's type | variables, typed constants, functions, procedures - a label is a constant expression (the intrinsics one may call stay: `Ord`, `High`, `SizeOf`) | 0.84.10 |
-| `for` bounds | `for I := \| to \|` | I's type | procedures | planned |
-| `for ... in` | `for X in \|` | what can be enumerated: an array, a set, a string, a class or record with GetEnumerator | procedures | planned |
+| `for` bounds | `for I := \| to \|`, `downto \|` | I's type; an inline `for var I :=` with no declared type expects nothing | procedures | 0.84.11 |
+| `for ... in` | `for X in \|` | what can be enumerated: an array, a set, a string, a class or record with GetEnumerator; where X has a declared type, the collection whose element is that type first, one whose element converts to it next, one whose element does not leads; a value with members leads, a scalar is wrong | procedures | 0.84.11 (a class or record helper's GetEnumerator counts, one helping an ordinal type does not; `for var X in` ranks every collection alike) |
 | an index | `A[\|]`, `Dict[\|]` | the index type: Integer for a dynamic array, the declared ordinal for a static one, the parameter of an array property (a dictionary's key) | procedures | planned |
 | a set element | `S := [\|]`, `K in [\|` | the set's element type | procedures | planned |
 | an operand of an operator | `X := A + \|` | A's family: a number, a string or Char, a set | procedures | later |

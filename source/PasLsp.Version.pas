@@ -396,7 +396,11 @@ const
   /// selector's type (no variable, function or procedure) - an older
   /// library compiles and silently lists procedures there unranked, and
   /// variables and functions in a label.
-  cMinPasTreeVersion = '0.163.0';
+  /// 0.164.0 (2026-11-08): a `for` bound (`for I := | to |`, `downto`)
+  /// expects the counter's type, and a for-in collection (`for X in |`)
+  /// what can be enumerated, its element of X's type first - an older
+  /// library compiles and silently lists procedures there unranked.
+  cMinPasTreeVersion = '0.164.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
