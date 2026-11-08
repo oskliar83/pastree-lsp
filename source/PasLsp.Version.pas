@@ -451,7 +451,14 @@ const
   /// sign), a left operand longer than a designator is typed by its
   /// expression (`X * Y and |`, `I + 1 = |`), and no procedure is listed
   /// there - an older library compiles and silently lists them unranked.
-  cMinPasTreeVersion = '0.172.0';
+  /// 0.173.0 (2026-11-08): a cast to a float or a record ranks its operand
+  /// by dcc's size rule, `raise X at |` ranks a pointer, a record type's
+  /// name after `with` is told by its class members, `inherited |` in a
+  /// class method marks an instance method wrong, a typeless property
+  /// redeclaration ranks by the inherited type, and an argument naming
+  /// another unit's enumeration value picks the overload - an older
+  /// library compiles and silently ranks none of them.
+  cMinPasTreeVersion = '0.173.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
