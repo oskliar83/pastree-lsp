@@ -377,7 +377,12 @@ const
   /// `F(5)` takes F(Byte) over F(Integer) declared first, a `var` parameter
   /// refuses a literal) - an older library compiles and silently offers the
   /// first declared overload of a tie.
-  cMinPasTreeVersion = '0.159.0';
+  /// 0.160.2 (2026-11-08): a record, an array or a typed pointer that
+  /// reaches no value of the expected type through its members is fit 3,
+  /// not "leads" (`StringToGUID` where an enumeration is expected) - an
+  /// older library compiles and silently ranks it above fitting names; an
+  /// untyped Pointer where a class is expected leads rather than fits.
+  cMinPasTreeVersion = '0.160.2';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
