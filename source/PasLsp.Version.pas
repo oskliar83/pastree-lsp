@@ -446,7 +446,12 @@ const
   /// it holds a class reference, and a class-reference value (`ClassType`)
   /// ranks below the types - an older library compiles and silently lists a
   /// unit's string constant there, Self's `ClassType` first.
-  cMinPasTreeVersion = '0.171.1';
+  /// 0.172.0 (2026-11-08): an operand of an arithmetic operator is ranked
+  /// by its left operand's family (`X := A + |`, `A div |`, `S + [|`, a
+  /// sign), a left operand longer than a designator is typed by its
+  /// expression (`X * Y and |`, `I + 1 = |`), and no procedure is listed
+  /// there - an older library compiles and silently lists them unranked.
+  cMinPasTreeVersion = '0.172.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
