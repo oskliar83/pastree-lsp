@@ -391,7 +391,12 @@ const
   /// variable of exactly that type (no constant, function or procedure) - an
   /// older library compiles and silently lists procedures and constants
   /// there, unranked.
-  cMinPasTreeVersion = '0.162.0';
+  /// 0.163.0 (2026-11-08): `Exit(|` expects the routine's result type, a
+  /// `case` selector any ordinal, a `case` label a constant of the
+  /// selector's type (no variable, function or procedure) - an older
+  /// library compiles and silently lists procedures there unranked, and
+  /// variables and functions in a label.
+  cMinPasTreeVersion = '0.163.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

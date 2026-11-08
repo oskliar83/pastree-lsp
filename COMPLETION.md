@@ -82,10 +82,10 @@ Value positions:
 | ... a `var`/`out` argument | `Inc(\|)`, `TryStrToInt(S, \|)` | a variable of exactly that type (an intrinsic's has none: `Inc` takes any ordinal); a property is fit 3 or leads | constants, functions, procedures | 0.84.9 |
 | ... an untyped or generic parameter | `FillChar(\|`, `Max<T>(\|` | no context (an open array too) | procedures | 0.84.9 |
 | a value typecast | `Int64(\|)`, `TFoo(\|)` | the cast's family: any ordinal (integer, enumeration, Char, Boolean) for an ordinal type; a class, interface or pointer for a class or pointer type | procedures | planned |
-| `Exit(\|)` | | the routine's result type | procedures | planned |
+| `Exit(\|)` | | the innermost routine's result type; none in a procedure (one nested in a function included) | procedures | 0.84.10 |
 | a condition | `if \|`, `while \|`, `until \|`, `if not \|` | Boolean; an intrinsic by its fixed result (`Assigned`, `Odd`) | procedures | 0.84.8 (a `not` elsewhere, an `and`/`or` operand: planned) |
-| a `case` selector | `case \| of` | any ordinal | procedures | planned |
-| a `case` label | `case K of \|:` | constants of K's type | variables, functions, procedures - a label is a constant expression | planned |
+| a `case` selector | `case \| of` | any ordinal (integer, enumeration, Char, Boolean) is fit 1; a float, a string, a set fit 3; a value with members leads | procedures | 0.84.10 |
+| a `case` label | `case K of \|:`, after `,` and `..` in a label list, a later arm's label | constants of K's type | variables, typed constants, functions, procedures - a label is a constant expression (the intrinsics one may call stay: `Ord`, `High`, `SizeOf`) | 0.84.10 |
 | `for` bounds | `for I := \| to \|` | I's type | procedures | planned |
 | `for ... in` | `for X in \|` | what can be enumerated: an array, a set, a string, a class or record with GetEnumerator | procedures | planned |
 | an index | `A[\|]`, `Dict[\|]` | the index type: Integer for a dynamic array, the declared ordinal for a static one, the parameter of an array property (a dictionary's key) | procedures | planned |
