@@ -1997,6 +1997,20 @@ begin
     '"detail":"(const AValue: TVal; AList: TGdList<TVal>): TGdList<TVal>"'),
     'a function with a generic result type shows it');
 
+  // `Self` has no symbol: its row showed no type until 2026-11-08. At the
+  // start of the statement it is listed with the method's class.
+  FindPos(LDeclFile, 'Self.GdArr', 'Self', LLine, LChar);
+  Check(Ask('textDocument/completion',
+    PositionParams(LDeclFile, LLine, LChar)),
+    'completion answered at the start of a statement in a method');
+  var LSelfAt := GResultJson.IndexOf('"label":"Self"');
+  var LSelfRow := '';
+  if LSelfAt >= 0 then
+    LSelfRow := GResultJson.Substring(LSelfAt,
+      GResultJson.IndexOf('}', LSelfAt) - LSelfAt);
+  Check(GOk and LSelfRow.Contains('"detail":": TGdBox<TVal>"'),
+    'the Self row shows the method''s class: ' + LSelfRow);
+
   FindPos(LUseFile, 'ABox.GdArr', 'GdArr', LLine, LChar);
   Check(Ask('textDocument/completion',
     PositionParams(LUseFile, LLine, LChar)),

@@ -989,6 +989,16 @@ var
   LFoldedValue: Int64;
 begin
   Result := '';
+  // `Self` has no symbol (11.3.3): the engine answers its type - the
+  // method's struct, `class of` it in a class method. Without this the row
+  // read as an untyped parameter (an IDE test, 2026-11-08).
+  if ACompletion.IsSelfItem(AItem) then
+  begin
+    LText := ACompletion.SelfTypeText;
+    if LText <> '' then
+      Result := ': ' + LText;
+    Exit;
+  end;
   LParamsText := ACompletion.ItemParamsText(AItem);
   if LParamsText <> '' then
     Result := CapDisplay(LParamsText);

@@ -69,6 +69,11 @@ predict, and a list the user cannot predict is one they stop reading.
   list. **Never listed** is the one exception: what the grammar forbids at
   the position, whatever its type - a procedure where a value is read, a
   variable where a constant must stand. Nothing is hidden for its type alone.
+- **`Self`** - ranked in every value position as a value of the method's
+  type (a helper's extended type), and in a class method as the class's name
+  is, the class reference it is; its row shows that type (`Self: TFoo`,
+  `Self: class of TFoo`). It has no declaration, and until 0.84.22 it was an
+  untyped row, fit 3, after every other match of its name.
 
 Value positions:
 

@@ -458,7 +458,10 @@ const
   /// redeclaration ranks by the inherited type, and an argument naming
   /// another unit's enumeration value picks the overload - an older
   /// library compiles and silently ranks none of them.
-  cMinPasTreeVersion = '0.173.0';
+  /// 0.173.1 (2026-11-08): `Self` is typed - a value of the method's type,
+  /// a class reference in a class method - and IsSelfItem / SelfTypeText
+  /// give its row's detail; an older library ranks Self fit 3, last.
+  cMinPasTreeVersion = '0.173.1';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
