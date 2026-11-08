@@ -405,7 +405,12 @@ const
   /// `Include(S, |)`) the set's base, an open array argument (`Foo([|])`)
   /// its element - an older library compiles and silently lists procedures
   /// there unranked.
-  cMinPasTreeVersion = '0.165.0';
+  /// 0.166.0 (2026-11-08): a value typecast's operand (`Int64(|`,
+  /// `TKind(|`, `TFoo(|`, `PChar(|`) is ranked by the cast's family - any
+  /// ordinal for an ordinal type, any reference for a class, interface or
+  /// pointer type - and lists no procedure; an older library compiles and
+  /// silently lists procedures there, unranked.
+  cMinPasTreeVersion = '0.166.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
