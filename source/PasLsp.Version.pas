@@ -416,7 +416,14 @@ const
   /// grouping paren (`if (|`, `if (A) and (|`) what its position expects -
   /// an older library compiles and silently lists procedures there,
   /// unranked.
-  cMinPasTreeVersion = '0.167.0';
+  /// 0.168.0 (2026-11-08): a `with` item (`with |`) expects a value with
+  /// members, a raised object (`raise |`) an Exception's descendant, both
+  /// listing no procedure; a procedural target (`OnClick := |`) ranks the
+  /// routines of its signature first and the procedures of another wrong;
+  /// a default or a typed constant (`const C: T = |`) lists no variable
+  /// and no function - an older library compiles and silently lists them,
+  /// unranked.
+  cMinPasTreeVersion = '0.168.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
