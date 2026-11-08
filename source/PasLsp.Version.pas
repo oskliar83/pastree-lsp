@@ -430,7 +430,13 @@ const
   /// constraint (`class`, `record`, `constructor` first); each lists types
   /// alone - an older library compiles and silently lists every value there,
   /// unranked.
-  cMinPasTreeVersion = '0.169.0';
+  /// 0.170.0 (2026-11-08): the declaration contexts - `implements |` lists
+  /// interfaces (the class's heritage list first), `class helper for |`
+  /// classes, `record helper for |` value types, `T = |` types and type
+  /// words before a subrange's bounds, a static array's bounds and a
+  /// subrange's high bound a constant expression - an older library
+  /// compiles and silently lists variables and routines there, unranked.
+  cMinPasTreeVersion = '0.170.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
