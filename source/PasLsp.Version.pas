@@ -479,7 +479,10 @@ const
   /// `is` / `as` and in the other one-category positions.
   /// 0.174.4 (2026-11-09): `Inc(|`, `Dec(|`, `SetLength(|` and `Assigned(|`
   /// rank by the intrinsic's shape - an older library ranks nothing there.
-  cMinPasTreeVersion = '0.174.4';
+  /// 0.174.5 (2026-11-09): keywords by position - no `interface` after
+  /// `array of`, no operator at an operand's start; an older library
+  /// lists them.
+  cMinPasTreeVersion = '0.174.5';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

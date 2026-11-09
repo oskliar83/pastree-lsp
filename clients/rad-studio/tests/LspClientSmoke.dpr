@@ -2033,6 +2033,29 @@ begin
     'virtual space after `inherited` lists the ancestor''s methods alone');
   SendDidChange(LInhFile, LInhOrig);
 
+  // Keywords in a type position (2026-11-09): `arr: array of int|` listed
+  // `interface`, which dcc takes only right after `T =`. A routine's var
+  // section: an array's element, then a variable's type, `class` included
+  // (E2058 outside a type declaration).
+  for var LTail in ['  Arr: array of int', '  V: '] do
+  begin
+    LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhOrig),
+      'function TDerived.Greet(const AName: string): string;',
+      ['var', LTail]));
+    SendDidChange(LInhFile, LInhText);
+    FindPosInText(LInhText, 'function TDerived.Greet(const AName: string)',
+      'function', LLine, LChar);
+    Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine + 2,
+      Length(LTail))), Format('completion answered after `%s`',
+      [Trim(LTail)]));
+    Check(GOk and GResultJson.Contains('"label":"Integer"') and
+      not GResultJson.Contains('"label":"interface"') and
+      not GResultJson.Contains('"label":"class"') and
+      not GResultJson.Contains('"label":"of"'),
+      Format('`%s` lists types, no interface, class or of', [Trim(LTail)]));
+  end;
+  SendDidChange(LInhFile, LInhOrig);
+
   FindPos(LUseFile, 'ABox.GdArr', 'GdArr', LLine, LChar);
   Check(Ask('textDocument/completion',
     PositionParams(LUseFile, LLine, LChar)),

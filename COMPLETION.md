@@ -137,6 +137,25 @@ heritage list does (a type position's "never listed"):
 A type NAME fits as a value where its type would (`X := TFoo(Y)`,
 `X := TFoo.Create`): the cast and the constructor both produce one.
 
+Keywords by position (0.85.6, each checked against dcc 37; an IDE test
+listed `interface` after `arr: array of int|`). `string` and `nil` come as
+the builtin type and constant of that name.
+
+| Position | Keywords listed | Not listed, and why |
+|---|---|---|
+| `T = \|` | `array` `set` `file` `record` `class` `interface` `dispinterface` `object` `procedure` `function` `packed` `string` `reference` `type` | `of` (never starts a type) |
+| a variable's, a field's, a typed constant's type; `array of \|` there | `array` `set` `file` `record` `packed` `string` `procedure` `function` | `class` `interface` `object` (E2058 outside a type declaration), `reference` (E2003, also after `array of` in a type declaration), `of` |
+| a parameter's type | `array` `string` `file` | the rest: a type identifier stands there |
+| an open array parameter's element (`A: array of \|`) | `const` `string` | |
+| a result's, a property's type | `string` | `array` (E2029), `file` (E2024) |
+| `^\|` | `string` | |
+| a generic argument | `string` | |
+| `set of \|`, `class of \|`, `file of \|`, a heritage list | none | |
+| `X is \|` | `not` | |
+| an operand's start (`:=`, `(`, an operator before) | `nil` `not` `inherited` `function` `procedure` (anonymous methods) `if` (an if-expression) | the binary operators |
+| right after an operand | `and` `or` `xor` `div` `mod` `shl` `shr` `is` `as` `in` `not` | `nil`, `inherited`, the anonymous methods |
+| a statement's start | `begin` `end` `if` `else` `case` `while` `repeat` `until` `for` `with` `try` `finally` `except` `raise` `goto` `asm` `inherited` `var` `const` | `then` `do` `to` `downto` (they follow a part of a statement) |
+
 - **Filter** - the letters already typed of the identifier at the caret.
 - **Fit** (per item, decided by PasTree's `MatchOf`, sent as `data.match`:
   0 and 1 are fit 1 - the same type, an assignable one - 2 is fit 2, 3 or
