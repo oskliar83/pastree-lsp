@@ -1,7 +1,7 @@
 # PasTree LSP
 
 Object Pascal code intelligence out of process, built on
-[PasTree](https://github.com/SkliarOleksandr/object-pascal-tree). One product,
+[PasTree](https://github.com/oskliar83/object-pascal-tree). One product,
 three pieces: a Win64 analysis server speaking the
 [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
 over JSON-RPC 2.0, a RAD Studio IDE package, and a VS Code extension - both

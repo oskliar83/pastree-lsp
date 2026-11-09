@@ -210,7 +210,7 @@ uses
   PasTreeIdePlugin.Settings;
 
 const
-  cHomeUrl = 'https://github.com/SkliarOleksandr/pastree-lsp';
+  cHomeUrl = 'https://github.com/oskliar83/pastree-lsp';
 
 procedure TPasTreeSettingsForm.lnkHomeLinkClick(Sender: TObject;
   const Link: string; LinkType: TSysLinkType);

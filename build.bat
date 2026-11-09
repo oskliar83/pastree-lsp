@@ -107,7 +107,7 @@ set PASTREE=..\object-pascal-tree
 if not exist "%PASTREE%\source" (
   if exist ".git\NUL" (
     echo === PasTree not found next to this repo, cloning it ===
-    git clone https://github.com/SkliarOleksandr/object-pascal-tree.git "%PASTREE%"
+    git clone https://github.com/oskliar83/object-pascal-tree.git "%PASTREE%"
     if errorlevel 1 goto :fail
   ) else (
     echo.

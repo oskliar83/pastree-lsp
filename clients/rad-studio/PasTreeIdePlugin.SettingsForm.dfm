@@ -78,7 +78,7 @@ object PasTreeSettingsForm: TPasTreeSettingsForm
       Width = 62
       Height = 19
       Caption = 
-        '<a href="https://github.com/SkliarOleksandr/pastree-lsp">pastree' +
+        '<a href="https://github.com/oskliar83/pastree-lsp">pastree' +
         '-lsp</a>'
       TabOrder = 0
       OnLinkClick = lnkHomeLinkClick
@@ -89,7 +89,7 @@ object PasTreeSettingsForm: TPasTreeSettingsForm
       Width = 135
       Height = 19
       Caption = 
-        '<a href="https://github.com/SkliarOleksandr/object-pascal-tree">' +
+        '<a href="https://github.com/oskliar83/object-pascal-tree">' +
         'object-pascal-tree parser</a>'
       TabOrder = 1
       OnLinkClick = lnkHomeLinkClick
@@ -100,7 +100,7 @@ object PasTreeSettingsForm: TPasTreeSettingsForm
       Width = 143
       Height = 19
       Caption = 
-        '<a href="https://github.com/SkliarOleksandr/object-pascal-spec">' +
+        '<a href="https://github.com/oskliar83/object-pascal-spec">' +
         'object pascal specification</a>'
       TabOrder = 2
       OnLinkClick = lnkHomeLinkClick
