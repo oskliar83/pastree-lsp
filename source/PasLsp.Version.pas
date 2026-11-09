@@ -472,7 +472,10 @@ const
   /// 0.174.1 (2026-11-09): a call argument of a routine the edited unit
   /// declares is ranked by its parameter's type - an older library takes
   /// that type for a type name and silently ranks nothing.
-  cMinPasTreeVersion = '0.174.1';
+  /// 0.174.2 (2026-11-09): a type constructor's tail (`array of |`, `^|`)
+  /// lists types alone, `class of` / `set of` are ranked - an older
+  /// library lists constants there.
+  cMinPasTreeVersion = '0.174.2';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
