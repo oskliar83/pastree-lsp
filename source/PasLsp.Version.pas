@@ -492,7 +492,9 @@ const
   /// 0.174.9 (2026-11-09): `as` ranks by its target, TObject / IInterface
   /// rank every descendant alike, tied overloads rank by each parameter -
   /// an older library ranks `Acc := O as |` by O alone.
-  cMinPasTreeVersion = '0.174.9';
+  /// 0.174.10 (2026-11-09): a fresh `(` in a Boolean position ranks nothing
+  /// - an older library puts the Boolean values first after `if (|`.
+  cMinPasTreeVersion = '0.174.10';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
