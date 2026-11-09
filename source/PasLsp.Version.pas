@@ -477,7 +477,9 @@ const
   /// library lists constants there.
   /// 0.174.3 (2026-11-09): no helper, no alias of another category after
   /// `is` / `as` and in the other one-category positions.
-  cMinPasTreeVersion = '0.174.3';
+  /// 0.174.4 (2026-11-09): `Inc(|`, `Dec(|`, `SetLength(|` and `Assigned(|`
+  /// rank by the intrinsic's shape - an older library ranks nothing there.
+  cMinPasTreeVersion = '0.174.4';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
