@@ -469,7 +469,10 @@ const
   /// (XConvDistX: a Double before a Single before an Integer for a
   /// TDateTime, the nearer descendant class first), the sortText digit
   /// after the match - an older library does not compile.
-  cMinPasTreeVersion = '0.174.0';
+  /// 0.174.1 (2026-11-09): a call argument of a routine the edited unit
+  /// declares is ranked by its parameter's type - an older library takes
+  /// that type for a type name and silently ranks nothing.
+  cMinPasTreeVersion = '0.174.1';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
