@@ -475,7 +475,9 @@ const
   /// 0.174.2 (2026-11-09): a type constructor's tail (`array of |`, `^|`)
   /// lists types alone, `class of` / `set of` are ranked - an older
   /// library lists constants there.
-  cMinPasTreeVersion = '0.174.2';
+  /// 0.174.3 (2026-11-09): no helper, no alias of another category after
+  /// `is` / `as` and in the other one-category positions.
+  cMinPasTreeVersion = '0.174.3';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
