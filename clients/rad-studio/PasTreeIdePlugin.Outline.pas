@@ -290,8 +290,29 @@ begin
   FExpanded := True;
 end;
 
-destructor TPasOutlineNode.Destroy;
+{ Clears a child's raw back-link when this node lets it go. A child can
+  outlive its parent: GNodesByRow holds every node with a row, but a folder
+  (no row) is held only by its parent or the context, so replacing the
+  context freed the folder while its children lived on. A queued caret
+  re-select then walked LNode.Parent into the freed folder - an AV reading
+  address 4 inside SelectCaretNode, seen on RAD Studio 23.0 (2026-11-09). }
+procedure DetachChild(const ANode: IOTAStructureNode; AParent: Pointer);
+var
+  LObj: TObject;
 begin
+  if ANode = nil then
+    Exit;
+  LObj := ANode as TObject;
+  if (LObj is TPasOutlineNode) and (TPasOutlineNode(LObj).FParent = AParent) then
+    TPasOutlineNode(LObj).FParent := nil;
+end;
+
+destructor TPasOutlineNode.Destroy;
+var
+  LIdx: Integer;
+begin
+  for LIdx := 0 to FChildren.Count - 1 do
+    DetachChild(FChildren[LIdx], Pointer(Self));
   FChildren.Free;
   inherited;
 end;
@@ -453,7 +474,10 @@ end;
 procedure TPasOutlineNode.RemoveChildNode(Index: Integer);
 begin
   if (Index >= 0) and (Index < FChildren.Count) then
+  begin
+    DetachChild(FChildren[Index], Pointer(Self));
     FChildren.Delete(Index);
+  end;
 end;
 
 function TPasOutlineNode.Navigate: Boolean;
