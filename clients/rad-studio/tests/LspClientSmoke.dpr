@@ -2113,6 +2113,29 @@ begin
   Check(GOk and GResultJson.Contains('"sortText":"3007integer"') and
     GResultJson.Contains('"sortText":"3007boolean"'),
     '`VD: |` puts Integer and Boolean at Conv 0');
+  // `as` takes its target's type (2026-11-09, R2): `LDer := LBase as |`
+  // puts TDerived at fit 0, and TBase - an ancestor of the target - and
+  // TOther at fit 3 (E2010), though both are fine for LBase alone. (The
+  // fixture has no RTL: the TObject rows, R1, are the probes' and
+  // SemaCompleteSmoke's.)
+  LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhOrig),
+    'function TDerived.Greet(const AName: string): string;',
+    ['var', '  LBase: TBase;', '  LDer: TDerived;']));
+  LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhText),
+    'Result := ''Derived: '' + AName;', ['  LDer := LBase as ;']));
+  SendDidChange(LInhFile, LInhText);
+  FindPosInText(LInhText, '  LDer := LBase as ', 'LDer', LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine,
+    Length('  LDer := LBase as '))), 'completion answered at `LDer := LBase as |`');
+  var LDerAt := Pos('"label":"TDerived"', GResultJson);
+  var LBaseAt := Pos('"label":"TBase"', GResultJson);
+  var LOtherAt := Pos('"label":"TOther"', GResultJson);
+  Check(GOk and (LDerAt > 0) and (LBaseAt > 0) and (LOtherAt > 0) and
+    Copy(GResultJson, LDerAt, 120).Contains('"sortText":"00') and
+    Copy(GResultJson, LBaseAt, 120).Contains('"sortText":"30') and
+    Copy(GResultJson, LOtherAt, 120).Contains('"sortText":"30'),
+    '`LDer := LBase as |` ranks TDerived fit 0, TBase and TOther fit 3: ' +
+    Copy(GResultJson, 1, 200));
   SendDidChange(LInhFile, LInhOrig);
 
   FindPos(LUseFile, 'ABox.GdArr', 'GdArr', LLine, LChar);

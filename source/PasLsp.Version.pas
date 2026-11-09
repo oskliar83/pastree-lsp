@@ -489,7 +489,10 @@ const
   /// 0.174.8 (2026-11-09): type positions - no helper where a type is
   /// declared, a heritage list ranked and judged through aliases, built-in
   /// types first, `^|;` completed; an older library lists the helpers.
-  cMinPasTreeVersion = '0.174.8';
+  /// 0.174.9 (2026-11-09): `as` ranks by its target, TObject / IInterface
+  /// rank every descendant alike, tied overloads rank by each parameter -
+  /// an older library ranks `Acc := O as |` by O alone.
+  cMinPasTreeVersion = '0.174.9';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
