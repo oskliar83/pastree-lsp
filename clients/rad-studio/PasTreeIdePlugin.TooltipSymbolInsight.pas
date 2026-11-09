@@ -709,6 +709,9 @@ begin
     if (FInfo.TypeSize >= 0) and (FInfo.InstanceSize >= 0) then
       LNote := LNote + Format(', InstanceSize: %d%s', [FInfo.InstanceSize,
         IfThen(FInfo.InstanceSizeMin, '+', '')]);
+    // An enumerated type: how many values it declares (Alex, 2026-11-09).
+    if (FInfo.TypeSize >= 0) and (FInfo.EnumCount >= 0) then
+      LNote := LNote + Format(', Count: %d', [FInfo.EnumCount]);
     if (FInfo.Note <> '') and ((FInfo.FilePath = '') or FInfo.Builtin
       or SameText(FInfo.Kind, 'conditional symbol')) then
     begin

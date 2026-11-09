@@ -731,6 +731,8 @@ type
     // TypeSize / InstanceSize are a generic declaration's minimum (shown `56+`).
     TypeSizeMin: Boolean;
     InstanceSizeMin: Boolean;
+    // The values an enumerated type declares, -1 for anything else.
+    EnumCount: Integer;
     // A routine's parameters, listed under "Parameters"; Doc then carries no
     // parameter section of its own.
     Params: TArray<TLspHoverParam>;
@@ -4402,6 +4404,7 @@ begin
   AInfo.InstanceSize := LCard.GetValue<Int64>('instanceSize', -1);
   AInfo.TypeSizeMin := LCard.GetValue<Boolean>('sizeOfMin', False);
   AInfo.InstanceSizeMin := LCard.GetValue<Boolean>('instanceSizeMin', False);
+  AInfo.EnumCount := LCard.GetValue<Integer>('enumCount', -1);
   if LCard.TryGetValue<TJSONArray>('params', LParams) then
     for LParamVal in LParams do
       if LParamVal is TJSONObject then

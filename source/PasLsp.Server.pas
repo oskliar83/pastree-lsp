@@ -8655,12 +8655,15 @@ var
   LIfStart, LIfLen, LIfMid, LIfSym, LBuiltinMid, LBuiltinSym: Integer;
   LSizeOf, LInstSize: Int64;
   LSizeMin, LInstMin: Boolean;
+  LEnumCount: Integer;
+  LSizeLine: string;
   LParams: TArray<TLspRoutineParam>;
   LParamDocs: TArray<TXmlDocEntry>;
   LParamsJson, LParamDoc, LHoverDoc: string;
 begin
   LSizeOf := -1;
   LInstSize := -1;
+  LEnumCount := -1;
   LSizeMin := False;
   LInstMin := False;
   LBuiltinCode := '';
@@ -8831,6 +8834,10 @@ begin
     LKind := KindWord(FProject.Model(LTMid).Symbols[LSymIdx].Kind);
     LIsSymbol := True;
     HoverSizes(LTMid, LSymIdx, LSizeOf, LInstSize, LSizeMin, LInstMin);
+    // An enumerated type: how many values it declares, after its size
+    // (Alex, 2026-11-09).
+    if FProject.Model(LTMid).Symbols[LSymIdx].Kind = skType then
+      LEnumCount := EnumValueCount(FProject, LTMid, LSymIdx);
     if FNav.DeclHit(LTMid, LSymIdx, LHit) then
     begin
       LCode := Trim(LHit.Snippet);
@@ -8909,14 +8916,18 @@ begin
   if LCode <> '' then
     LMd := '```pascal'#10 + LCode + #10'```'#10#10;
   // A type's size on the analyzed platform, right under the declaration as
-  // the RAD hint shows it (Alex, 2026-10-09).
+  // the RAD hint shows it (Alex, 2026-10-09); an enumerated type's value
+  // count after it (2026-11-09).
   if LSizeOf >= 0 then
+  begin
+    LSizeLine := 'SizeOf: ' + SizeText(LSizeOf, LSizeMin);
     if LInstSize >= 0 then
-      LMd := LMd + Format('_SizeOf: %s, InstanceSize: %s_'#10#10,
-        [SizeText(LSizeOf, LSizeMin), SizeText(LInstSize, LInstMin)])
-    else
-      LMd := LMd + Format('_SizeOf: %s_'#10#10,
-        [SizeText(LSizeOf, LSizeMin)]);
+      LSizeLine := LSizeLine + ', InstanceSize: ' +
+        SizeText(LInstSize, LInstMin);
+    if LEnumCount >= 0 then
+      LSizeLine := LSizeLine + ', Count: ' + IntToStr(LEnumCount);
+    LMd := LMd + '_' + LSizeLine + '_'#10#10;
+  end;
   if LDoc <> '' then
     LMd := LMd + LDoc + #10#10;
   LMd := LMd + '_' + LNote + '_';
@@ -9011,15 +9022,16 @@ begin
   // `sizeOf` is a type's SizeOf on the analyzed platform, `instanceSize` a
   // class's InstanceSize; -1 for anything else and where the layout walk
   // refuses (HoverSizes). `sizeOfMin` / `instanceSizeMin`: the number is a
-  // generic declaration's minimum.
+  // generic declaration's minimum. `enumCount`: the values an enumerated
+  // type declares, -1 for anything else.
   LHoverJson := Format('{"code":%s,"typeSpans":%s,"headLen":%d,"doc":%s,' +
     '"kind":%s,"note":%s,"builtin":%s,"sizeOf":%d,"sizeOfMin":%s,' +
-    '"instanceSize":%d,"instanceSizeMin":%s,"file":%s,"line":%d,"col":%d,' +
-    '"params":[%s]}',
+    '"instanceSize":%d,"instanceSizeMin":%s,"enumCount":%d,' +
+    '"file":%s,"line":%d,"col":%d,"params":[%s]}',
     [JsonQuote(LHoverCode), LTypeSpans, LHeadLen, JsonQuote(LHoverDoc),
      JsonQuote(LKind), JsonQuote(LHoverNote), BoolToStr(LIsBuiltin, True).ToLower,
      LSizeOf, BoolToStr(LSizeMin, True).ToLower,
-     LInstSize, BoolToStr(LInstMin, True).ToLower,
+     LInstSize, BoolToStr(LInstMin, True).ToLower, LEnumCount,
      JsonQuote(LDeclFile), LDeclLine, LDeclCol, LParamsJson]);
   { `pastreeHtml` is OURS, alongside the standard contents: the same card as a
     Help Insight page, in the shape the IDE's own HelpInsight.xsl emits (see

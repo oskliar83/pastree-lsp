@@ -2242,6 +2242,8 @@ begin
     'Double reads "type System.Double", no range');
   Check(GOk and GResultJson.Contains('"sizeOf":8,') and
     GResultJson.Contains('_SizeOf: 8_'), 'Double''s SizeOf is 8, in the markdown too');
+  Check(GOk and GResultJson.Contains('"enumCount":-1,'),
+    'and no value count - it is no enumerated type');
   // A declaration over two lines reads as one, without the line break and
   // the next line's indentation (Alex, 2026-10-08).
   FindPos(LFile, 'TInferWrapped =', 'TInferWrapped', LLine, LChar);
@@ -2252,6 +2254,10 @@ begin
   Check(GOk and GResultJson.Contains(
     '"sizeOf":1,"sizeOfMin":false,"instanceSize":-1,'),
     'and its SizeOf is 1, no InstanceSize');
+  // An enumerated type counts its values after the size (Alex, 2026-11-09).
+  Check(GOk and GResultJson.Contains('"enumCount":4,') and
+    GResultJson.Contains('_SizeOf: 1, Count: 4_'),
+    'and it declares 4 values, in the markdown too');
   // A class has both, as dcc prints them: Win32 20, Win64 32 (Alex,
   // 2026-10-09).
   FindPos(LFile, 'TInferSized =', 'TInferSized', LLine, LChar);

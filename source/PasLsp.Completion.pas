@@ -247,6 +247,12 @@ type
       : TArray<TLspUsesRemoval>;
   end;
 
+{ How many values the enumerated type ASym of model AMid declares, its
+  aliases followed - -1 when it is not one. The hover's size line shows it
+  (Alex, 2026-11-09). }
+function EnumValueCount(AProject: TPasSemaProject; AMid, ASym: Integer)
+  : Integer;
+
 implementation
 
 uses
@@ -398,14 +404,17 @@ end;
 
 { Is AX, its aliases followed, an enumerated type - `TDemoColor = (dcRed,
   ...)`? Read off the defining declaration's tree (nodes outlive a demoted
-  model's text), since PasTree keeps its own type category private. }
-function IsEnumTypeX(AProject: TPasSemaProject; const AX: TSemaXType): Boolean;
+  model's text), since PasTree keeps its own type category private. The
+  count is the nkEnumValue children of its nkEnumType: the names declared,
+  not High - Low + 1, which explicit values (`(a = 1, b = 10)`) widen. }
+function EnumValueCountX(AProject: TPasSemaProject;
+  const AX: TSemaXType): Integer;
 var
   LX: TSemaXType;
   LModel: TPasSemaModel;
-  LDecl, LChild: Integer;
+  LDecl, LChild, LValue: Integer;
 begin
-  Result := False;
+  Result := -1;
   if not XValid(AX) then
     Exit;
   LX := AProject.CanonTypeX(AX);
@@ -422,9 +431,35 @@ begin
   while LChild <> NIL_NODE do
   begin
     if LModel.Tree.Nodes[LChild].Kind = nkEnumType then
-      Exit(True);
+    begin
+      Result := 0;
+      LValue := LModel.Tree.Nodes[LChild].FirstChild;
+      while LValue <> NIL_NODE do
+      begin
+        if LModel.Tree.Nodes[LValue].Kind = nkEnumValue then
+          Inc(Result);
+        LValue := LModel.Tree.Nodes[LValue].NextSibling;
+      end;
+      Exit;
+    end;
     LChild := LModel.Tree.Nodes[LChild].NextSibling;
   end;
+end;
+
+function EnumValueCount(AProject: TPasSemaProject; AMid, ASym: Integer)
+  : Integer;
+var
+  LX: TSemaXType;
+begin
+  LX.UnitId := AMid;
+  LX.Sym := ASym;
+  LX.Inst := NIL_INST;
+  Result := EnumValueCountX(AProject, LX);
+end;
+
+function IsEnumTypeX(AProject: TPasSemaProject; const AX: TSemaXType): Boolean;
+begin
+  Result := EnumValueCountX(AProject, AX) >= 0;
 end;
 
 { The first visible token a node's TEXT starts at - its own FirstToken or an
