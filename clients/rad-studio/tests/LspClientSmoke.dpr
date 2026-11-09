@@ -2095,6 +2095,24 @@ begin
     Length('  Exit('))), 'completion answered at Exit( in a procedure');
   Check(GOk and not GResultJson.Contains('"label":'),
     '`Exit(` in a procedure lists nothing: ' + Copy(GResultJson, 1, 200));
+  // Type positions (2026-11-09, the completion audit): `VP: ^|;` lists the
+  // types (`^;` lexed as a caret character and listed nothing), and a
+  // declaration's type puts the compiler's simple types first - Integer at
+  // Conv 0 (sortText `3007integer`: no fit, Conv 0, the builtin bucket).
+  LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhOrig),
+    'implementation', ['var', '  VP: ^;', '  VD: ;']));
+  SendDidChange(LInhFile, LInhText);
+  FindPosInText(LInhText, '  VP: ^;', 'VP', LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine,
+    Length('  VP: ^'))), 'completion answered at `VP: ^|;`');
+  Check(GOk and GResultJson.Contains('"label":"Integer"'),
+    '`VP: ^|;` lists the types: ' + Copy(GResultJson, 1, 200));
+  FindPosInText(LInhText, '  VD: ;', 'VD', LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine,
+    Length('  VD: '))), 'completion answered at `VD: |;`');
+  Check(GOk and GResultJson.Contains('"sortText":"3007integer"') and
+    GResultJson.Contains('"sortText":"3007boolean"'),
+    '`VD: |` puts Integer and Boolean at Conv 0');
   SendDidChange(LInhFile, LInhOrig);
 
   FindPos(LUseFile, 'ABox.GdArr', 'GdArr', LLine, LChar);

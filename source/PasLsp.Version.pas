@@ -486,7 +486,10 @@ const
   /// `Exit(` in a procedure list only what can stand there - an older
   /// library lists variables in `const C = A + |` and procedures after
   /// `Exit(`.
-  cMinPasTreeVersion = '0.174.6';
+  /// 0.174.8 (2026-11-09): type positions - no helper where a type is
+  /// declared, a heritage list ranked and judged through aliases, built-in
+  /// types first, `^|;` completed; an older library lists the helpers.
+  cMinPasTreeVersion = '0.174.8';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
