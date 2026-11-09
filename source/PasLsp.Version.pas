@@ -482,7 +482,11 @@ const
   /// 0.174.5 (2026-11-09): keywords by position - no `interface` after
   /// `array of`, no operator at an operand's start; an older library
   /// lists them.
-  cMinPasTreeVersion = '0.174.5';
+  /// 0.174.6 (2026-11-09): a constant expression, a `var` argument and
+  /// `Exit(` in a procedure list only what can stand there - an older
+  /// library lists variables in `const C = A + |` and procedures after
+  /// `Exit(`.
+  cMinPasTreeVersion = '0.174.6';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

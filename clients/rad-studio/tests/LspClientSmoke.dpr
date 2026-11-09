@@ -2056,6 +2056,47 @@ begin
   end;
   SendDidChange(LInhFile, LInhOrig);
 
+  // A constant expression (2026-11-09, the completion audit): a `case`
+  // label lists `nil` and `not` alone of the operand words (`inherited`,
+  // an anonymous method and an if-expression are E2026), no Self and no
+  // variable; an untyped constant `C = |` no function (it listed every
+  // variable and routine); `Exit(|` in a procedure nothing (E2025).
+  LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhOrig),
+    'Result := ''Derived: '' + AName;',
+    ['  case Length(AName) of ', '    1: ;', '  end;']));
+  SendDidChange(LInhFile, LInhText);
+  FindPosInText(LInhText, 'Result := ''Derived: '' + AName;', 'Result',
+    LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine + 1,
+    Length('  case Length(AName) of '))),
+    'completion answered at a case label');
+  Check(GOk and GResultJson.Contains('"label":"nil"') and
+    not GResultJson.Contains('"label":"inherited"') and
+    not GResultJson.Contains('"label":"if"') and
+    not GResultJson.Contains('"label":"Self"') and
+    not GResultJson.Contains('"label":"AName"'),
+    'a case label lists nil, no inherited, if, Self or variable');
+  LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhOrig),
+    'implementation', ['const', '  CX = ;']));
+  SendDidChange(LInhFile, LInhText);
+  FindPosInText(LInhText, '  CX = ;', 'CX', LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine,
+    Length('  CX = '))), 'completion answered at an untyped constant');
+  Check(GOk and GResultJson.Contains('"label":"MaxInt"') and
+    not GResultJson.Contains('"label":"Random"') and
+    not GResultJson.Contains('"label":"inherited"'),
+    'an untyped constant lists constants, no function, no inherited');
+  LInhText := string.Join(#13#10, InsertAfterLine(SplitLines(LInhOrig),
+    'inherited;   // the two-argument TBase.Init, not the chain head',
+    ['  Exit(']));
+  SendDidChange(LInhFile, LInhText);
+  FindPosInText(LInhText, '  Exit(', 'Exit', LLine, LChar);
+  Check(Ask('textDocument/completion', PositionParams(LInhFile, LLine,
+    Length('  Exit('))), 'completion answered at Exit( in a procedure');
+  Check(GOk and not GResultJson.Contains('"label":'),
+    '`Exit(` in a procedure lists nothing: ' + Copy(GResultJson, 1, 200));
+  SendDidChange(LInhFile, LInhOrig);
+
   FindPos(LUseFile, 'ABox.GdArr', 'GdArr', LLine, LChar);
   Check(Ask('textDocument/completion',
     PositionParams(LUseFile, LLine, LChar)),
