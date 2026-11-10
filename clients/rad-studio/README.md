@@ -526,8 +526,12 @@ history:
   swallowed there, the technique GExperts and DDevExtensions use. The control
   comes from `OnEditorMouseMove`, which 12 does have - the mouse crosses the
   editor before it can click in it. Two silent failure modes to keep in mind
-  when editing that code: a hook must go dead on `WM_NCDESTROY` (the editor
-  window can close under it), and every hook must be freed at package unload,
+  when editing that code: a hook must go dead when the editor control is
+  freed - its `FreeNotification`, never `WM_NCDESTROY`, since applying the
+  editor options recreates the control's handle while the control and our
+  `WindowProc` on it live on (0.85.15: a hook dead on `WM_NCDESTROY` was
+  freed under a live chain, an access violation per message after that) -
+  and every hook must be freed at package unload,
   or the next mouse message in that editor calls into unloaded package code.
   Selected by `{$IF Declared(TEditorMouseExEvent)}`, i.e. on the API's
   presence rather than a version number.

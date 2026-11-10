@@ -45,8 +45,15 @@ unit PasTreeIdePlugin.EditorWindowHook;
   THREE THINGS THAT ARE SILENT WHEN WRONG:
 
     - A hooked control can be destroyed while the package lives (closing an
-      editor window). WM_NCDESTROY marks the hook dead; nothing may touch
-      the control afterwards.
+      editor window). Its FreeNotification marks the hook dead; nothing may
+      touch the control afterwards. NOT WM_NCDESTROY: that is the end of a
+      window HANDLE, and the IDE recreates the editor's handle (RecreateWnd)
+      while the TWinControl and its WindowProc - still ours - live on. Applying
+      Tools > Options > Editor (line numbers, zoom to full screen) does it.
+      Until 0.85.15 that marked the hook dead, the next paint freed it, and
+      every later message called a freed hook's FOriginal: an access violation
+      per message at an address made of text, and an IDE that had to be
+      restarted.
     - Every hook MUST be released before the BPL unloads (Finalize...) or
       the next mouse message in that editor calls into unloaded package
       code - the AV class this project has already hit through package
@@ -155,13 +162,18 @@ uses
 type
   TEditorHookRegistry = class;
 
-  TEditorWindowHook = class
+  // A TComponent for the control's FreeNotification - see this unit's header
+  // for why the control's destruction, not its handle's, is what kills a hook.
+  TEditorWindowHook = class(TComponent)
   private
     FRegistry: TEditorHookRegistry;
     FControl: TWinControl;
     FOriginal: TWndMethod;
     FDead: Boolean;
     procedure HookedWndProc(var AMessage: TMessage);
+  protected
+    procedure Notification(AComponent: TComponent;
+      AOperation: TOperation); override;
   public
     constructor Create(ARegistry: TEditorHookRegistry;
       const AControl: TWinControl);
@@ -234,11 +246,12 @@ end;
 constructor TEditorWindowHook.Create(ARegistry: TEditorHookRegistry;
   const AControl: TWinControl);
 begin
-  inherited Create;
+  inherited Create(nil);
   FRegistry := ARegistry;
   FControl := AControl;
   FOriginal := AControl.WindowProc;
   AControl.WindowProc := HookedWndProc;
+  AControl.FreeNotification(Self);
 end;
 
 destructor TEditorWindowHook.Destroy;
@@ -253,6 +266,20 @@ begin
     LOurs := TMethod(LMine);
     if (LCurrent.Code = LOurs.Code) and (LCurrent.Data = LOurs.Data) then
       FControl.WindowProc := FOriginal;
+    FControl.RemoveFreeNotification(Self);
+  end;
+  inherited;
+end;
+
+procedure TEditorWindowHook.Notification(AComponent: TComponent;
+  AOperation: TOperation);
+begin
+  // The control is being freed: it calls its WindowProc no more after this
+  // point, so the hook is only left for the registry to sweep (EnsureHooked).
+  if (AOperation = opRemove) and (AComponent = FControl) then
+  begin
+    FDead := True;
+    FControl := nil;
   end;
   inherited;
 end;
@@ -309,16 +336,8 @@ begin
           FRegistry.FOnKeyUp(FControl, Word(AMessage.WParam));
         Exit;
       end;
-    WM_NCDESTROY:
-      begin
-        // The control is going away under us. Let it finish, then mark the
-        // hook dead so nothing here dereferences FControl again and the
-        // registry can sweep it (see EnsureHooked).
-        FOriginal(AMessage);
-        FDead := True;
-        FControl := nil;
-        Exit;
-      end;
+    // No WM_NCDESTROY case: the handle going away is not the hook's end -
+    // see this unit's header.
   end;
   FOriginal(AMessage);
 end;

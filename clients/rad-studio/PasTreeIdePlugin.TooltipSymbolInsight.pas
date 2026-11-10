@@ -66,7 +66,10 @@ unit PasTreeIdePlugin.TooltipSymbolInsight;
   with an ERROR shows the problems alone - no card, not even asked for (a
   redeclared name's card is the declaration it collides with); so does a
   name with no card (an undeclared identifier) and a problem that is not on
-  a name at all (a missing `;`). A warning or hint keeps the card.
+  a name at all (a missing `;`). A warning or hint keeps the card. While the
+  IDE's own Error Insight is fed from PasTree (NativeErrorInsight) the IDE
+  shows its error hint over our problems itself, so over a problem ours
+  shows nothing at all (0.85.15; two hints until then).
 
   WHILE THE ANALYSIS IS NOT READY the hover request waits in the server
   (WaitAnalyzed). Instead of the native "Calculating..." window, ours shows
@@ -1315,6 +1318,18 @@ begin
     LTo := Min(Max(FErrors[0].ColTo, LFrom + 1), Length(LText) + 1);
     if LTo <= LFrom then
       LTo := LFrom + 1;
+  end;
+  // The IDE's own error hint is up over the same problem whenever its Error
+  // Insight is fed from PasTree (NativeErrorInsight: the marks we push get
+  // the IDE's hint, under any Error Insight level and with
+  // DeclarationInformation off - seen on 12 and 13, Alex 2026-11-10). Ours
+  // would be a second window over it, so it gives way entirely - the card
+  // included, which would overlap it just the same.
+  if (Length(FErrors) > 0) and NativeErrorInsightEnabled and
+     PasTreeProviderSelected then
+  begin
+    FErrors := nil;
+    Exit;
   end;
 
   FRow := LLineState.LogicalLineNum;
