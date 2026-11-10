@@ -312,6 +312,15 @@ type
     function IsReady: Boolean;
 
     /// <summary>
+    /// True while one of the connection's callbacks is on the stack - a frame
+    /// or the gone-notification being dispatched. Freeing this object then is
+    /// a use-after-free: the destructor frees the connection, which releases
+    /// the closure whose body is still running (the pool defers a pruned
+    /// session on this, see TLspSessionPool.DisposeDoomed).
+    /// </summary>
+    function IsDispatching: Boolean;
+
+    /// <summary>
     /// The "server ready: <version> for <project>" line, or '' before the
     /// handshake has answered. Logged once by the handshake itself; exposed
     /// because reopening the same project does not restart the server and the
@@ -713,6 +722,11 @@ end;
 function TLspClient.IsReady: Boolean;
 begin
   Result := (FState = lcsReady) and Assigned(FConn) and FConn.IsRunning;
+end;
+
+function TLspClient.IsDispatching: Boolean;
+begin
+  Result := FDispatchDepth > 0;
 end;
 
 function TLspClient.Start(const AOptions: TLspInitOptions): Boolean;

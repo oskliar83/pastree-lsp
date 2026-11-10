@@ -4988,15 +4988,21 @@ begin
   FindPos(LAppFile, 'Writeln(Greet(''world', 'Greet', LLine, LChar);
   Check(Ask('textDocument/definition', PositionParams(LAppFile, LLine, LChar)),
     'a request made the server write again');
+  // Verbatim since 0.85.14: the header as first written - its separator,
+  // version, hardware, host, configuration and path inventory - and then
+  // one line saying why it is there again.
   LLines := SplitLines(ReadServerLog);
-  Check((Length(LLines) > 3) and
-    LLines[0].Contains('log emptied under a running server'),
-    'the first line says the log was emptied under this server');
-  Check((Length(LLines) > 3) and LLines[1].Contains('pastree-lsp-server ') and
+  Check((Length(LLines) > 3) and (LLines[0] = StringOfChar('-', 64)) and
+    LLines[1].Contains('pastree-lsp-server ') and
     LLines[2].Contains('hardware: '),
-    'and the version and hardware lines follow it');
+    'the header comes back as written: separator, version, hardware');
   Check(string.Join(#10, LLines).Contains('configured: '),
     'with the configuration line among them');
+  Check(string.Join(#10, LLines).Contains('  path '),
+    'and the path inventory');
+  Check(string.Join(#10, LLines).Contains('project reopened: the log was '
+    + 'emptied under a running server'),
+    'and one line says the log was emptied under this server');
 end;
 
 { 5x. pastree/unusedUses and pastree/unreferencedUnits (0.62.0), over a

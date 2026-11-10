@@ -120,6 +120,11 @@ procedure FinalizeCrashLog;
 /// </summary>
 procedure SetCrashLogPath(const ALspLogPath: string);
 /// <summary>
+/// The crash log's full name in ADir - what SetCrashLogPath points at for a
+/// server log there. For moving it with a project saved elsewhere.
+/// </summary>
+function CrashLogPathIn(const ADir: string): string;
+/// <summary>
 /// True writes every access violation in the IDE, with or without a frame of
 /// this plugin - the behaviour before 0.62.2, for chasing a fault the walk
 /// cannot attribute. Settings > Diagnostics > "Log all IDE crashes", OFF by
@@ -218,6 +223,14 @@ begin
   finally
     GLock.Leave;
   end;
+end;
+
+function CrashLogPathIn(const ADir: string): string;
+begin
+  if ADir = '' then
+    Result := ''
+  else
+    Result := TPath.Combine(ADir, cCrashLogName);
 end;
 
 procedure SetCrashLogAll(AAll: Boolean);

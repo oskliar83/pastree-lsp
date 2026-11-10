@@ -93,14 +93,36 @@ type
 
   TLspConnection = class;
 
+  /// <summary>
+  /// What a queued closure of the reader thread reaches its connection
+  /// through. RemoveQueuedEvents is NOT enough to make those closures safe:
+  /// CheckSynchronize detaches the whole queue into a local list before it
+  /// runs any of it, and RemoveQueuedEvents only sweeps the global one. When
+  /// one frame of a batch frees the connection (a session pruned from inside
+  /// its own dispatch), the batch's remaining frames still run - each one an
+  /// access violation reading the freed reader's FOwner (2026-11-10: one
+  /// write AV in the frame closure, then eight reads of 00000028 in
+  /// DispatchFrame, a dialog each). The gate is reference-counted, so it
+  /// outlives both objects; the connection closes it first thing in its
+  /// destructor, on the main thread, where the closures also run.
+  /// </summary>
+  ILspDispatchGate = interface
+    ['{54CEF8B6-B174-4871-B200-7FD382EA6A27}']
+    function Owner: TLspConnection;
+    procedure Close;
+  end;
+
   TLspReaderThread = class(TThread)
   private
+    // Never read FOwner from a queued closure - go through FGate.
     FOwner: TLspConnection;
+    FGate: ILspDispatchGate;
     FPipe: THandle;
     FStopEvent: THandle;
     FReadEvent: THandle;
     FParser: TLspFrameParser;
     procedure QueueFrame(const AJson: string);
+    procedure QueueGone(const AReason: string);
   protected
     procedure Execute; override;
   public
@@ -195,6 +217,31 @@ type
     property LastSendWaitMs: Double read FLastSendWaitMs;
     property LastSendPending: Boolean read FLastSendPending;
   end;
+
+  /// <summary>What RelocateLogFile did - see there.</summary>
+  TLogRelocation = (lrNothing, lrMoved, lrCopied, lrCopiedOldKept);
+
+/// <summary>
+/// Moves the log at AFrom to ATo - the log following its project when the
+/// project is saved under a new name or in a new folder (Save Project As, the
+/// first save of an unnamed Project1).
+///
+/// A RENAME FIRST, A COPY WHEN IT CANNOT BE. MoveFileEx renames a file that
+/// is open only when every handle on it was opened with FILE_SHARE_DELETE,
+/// and none of ours is: the server's stderr handle (TLspConnection.Create)
+/// and its own AppendLog share read and write only, and a tail in an editor
+/// may hold it too. LspTransportSmoke measures exactly that. So when the
+/// rename fails, or ATo already exists (a log left by an earlier project of
+/// that name - never overwritten), AFrom's bytes are APPENDED to ATo and
+/// AFrom deleted; a delete refused by a handle still open leaves AFrom in
+/// place (lrCopiedOldKept), and the caller says in it where it continues.
+/// The caller stops the server first, so normally nothing holds the file and
+/// the rename wins.
+///
+/// lrNothing: no AFrom, or AFrom and ATo are the same file, or the copy
+/// failed - ATo is then untouched.
+/// </summary>
+function RelocateLogFile(const AFrom, ATo: string): TLogRelocation;
 
 implementation
 
@@ -355,12 +402,41 @@ begin
   Result := True;
 end;
 
+{ TLspDispatchGate }
+
+type
+  TLspDispatchGate = class(TInterfacedObject, ILspDispatchGate)
+  private
+    FOwner: TLspConnection;
+  public
+    constructor Create(AOwner: TLspConnection);
+    function Owner: TLspConnection;
+    procedure Close;
+  end;
+
+constructor TLspDispatchGate.Create(AOwner: TLspConnection);
+begin
+  inherited Create;
+  FOwner := AOwner;
+end;
+
+function TLspDispatchGate.Owner: TLspConnection;
+begin
+  Result := FOwner;
+end;
+
+procedure TLspDispatchGate.Close;
+begin
+  FOwner := nil;
+end;
+
 { TLspReaderThread }
 
 constructor TLspReaderThread.Create(AOwner: TLspConnection;
   APipe, AStopEvent: THandle);
 begin
   FOwner := AOwner;
+  FGate := TLspDispatchGate.Create(AOwner);
   FPipe := APipe;
   FStopEvent := AStopEvent;
   // Manual reset: WaitForMultipleObjects must see a completion that was
@@ -381,12 +457,31 @@ end;
 // A parameter, not a captured local: each call gets its own closure frame.
 // Capturing a loop variable would hand every queued closure the same
 // (last-written) string - the classic Delphi anonymous-method capture trap.
+// The closures capture the gate, never Self: the thread object may be freed
+// before they run (see ILspDispatchGate).
 procedure TLspReaderThread.QueueFrame(const AJson: string);
+var
+  LGate: ILspDispatchGate;
 begin
+  LGate := FGate;
   TThread.Queue(Self,
     procedure
     begin
-      FOwner.DispatchFrame(AJson);
+      if Assigned(LGate.Owner) then
+        LGate.Owner.DispatchFrame(AJson);
+    end);
+end;
+
+procedure TLspReaderThread.QueueGone(const AReason: string);
+var
+  LGate: ILspDispatchGate;
+begin
+  LGate := FGate;
+  TThread.Queue(Self,
+    procedure
+    begin
+      if Assigned(LGate.Owner) then
+        LGate.Owner.DispatchGone(AReason);
     end);
 end;
 
@@ -473,11 +568,7 @@ begin
   end;
 
   if not Terminated then
-    TThread.Queue(Self,
-      procedure
-      begin
-        FOwner.DispatchGone(LReason);
-      end);
+    QueueGone(LReason);
 end;
 
 { TLspConnection }
@@ -690,6 +781,10 @@ end;
   5. Only now close the handles the thread was using. }
 destructor TLspConnection.Destroy;
 begin
+  // First: a closure already detached by CheckSynchronize must find no owner.
+  if Assigned(FReader) then
+    FReader.FGate.Close;
+
   if FWriteEnd <> INVALID_HANDLE_VALUE then
   begin
     CloseHandle(FWriteEnd);
@@ -833,6 +928,66 @@ function TLspConnection.WaitForExit(ATimeoutMs: Cardinal): Boolean;
 begin
   Result := (FProcess = 0) or
     (WaitForSingleObject(FProcess, ATimeoutMs) = WAIT_OBJECT_0);
+end;
+
+function RelocateLogFile(const AFrom, ATo: string): TLogRelocation;
+var
+  LSrc, LDst: THandle;
+  LBuf: TBytes;
+  LRead, LWritten: DWORD;
+  LOk: Boolean;
+begin
+  Result := lrNothing;
+  if (AFrom = '') or (ATo = '') or not FileExists(AFrom) then
+    Exit;
+  if SameText(ExpandFileName(AFrom), ExpandFileName(ATo)) then
+    Exit;
+  if ExtractFilePath(ATo) <> '' then
+    ForceDirectories(ExtractFilePath(ATo));
+  // MOVEFILE_COPY_ALLOWED: another volume is a copy and a delete, done by
+  // the OS. No MOVEFILE_REPLACE_EXISTING - an existing ATo is appended to.
+  if not FileExists(ATo) and
+     MoveFileEx(PChar(AFrom), PChar(ATo), MOVEFILE_COPY_ALLOWED) then
+    Exit(lrMoved);
+  // Every share, for reading: whatever holds AFrom (the server appending
+  // through FILE_SHARE_READ) must not be what makes the copy fail.
+  LSrc := CreateFile(PChar(AFrom), GENERIC_READ,
+    FILE_SHARE_READ or FILE_SHARE_WRITE or FILE_SHARE_DELETE, nil,
+    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  if LSrc = INVALID_HANDLE_VALUE then
+    Exit;
+  try
+    // The same open AppendLog and AppendIdeLogLine use, so a server already
+    // writing to ATo keeps its lines and ours land after them.
+    LDst := CreateFile(PChar(ATo), FILE_APPEND_DATA,
+      FILE_SHARE_READ or FILE_SHARE_WRITE, nil, OPEN_ALWAYS,
+      FILE_ATTRIBUTE_NORMAL, 0);
+    if LDst = INVALID_HANDLE_VALUE then
+      Exit;
+    try
+      SetLength(LBuf, 64 * 1024);
+      LOk := True;
+      repeat
+        if not ReadFile(LSrc, LBuf[0], Length(LBuf), LRead, nil) then
+          LOk := False
+        else if LRead > 0 then
+          LOk := WriteFile(LDst, LBuf[0], LRead, LWritten, nil) and
+            (LWritten = LRead);
+      until not LOk or (LRead = 0);
+    finally
+      CloseHandle(LDst);
+    end;
+  finally
+    CloseHandle(LSrc);
+  end;
+  // A copy cut short keeps the old file whole: the history is worth more
+  // than a tidy folder.
+  if not LOk then
+    Exit(lrCopiedOldKept);
+  if System.SysUtils.DeleteFile(AFrom) then
+    Result := lrCopied
+  else
+    Result := lrCopiedOldKept;
 end;
 
 end.

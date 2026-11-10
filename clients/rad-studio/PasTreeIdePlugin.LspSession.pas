@@ -1468,6 +1468,7 @@ uses
   PasTreeIdePlugin.LspDocuments,
   PasTreeIdePlugin.DcuNames,
   PasTreeIdePlugin.Timing,
+  PasTreeIdePlugin.LspTransport,   // RelocateLogFile, for a project saved as
   PasTreeIdePlugin.Settings,
   PasTreeIdePlugin.TokenShift;
 
@@ -1506,6 +1507,39 @@ type
     const AName: string; const ARows: TArray<TLspHierarchyRow>;
     const AError: string);
 
+  TLspSession = class;
+
+  { WATCHES ONE PROJECT MODULE FOR BEING SAVED UNDER A NEW NAME - Save Project
+    As, or the first save of an unnamed Project1, which is a Save As too.
+    Sessions are keyed by the .dproj file name, and nothing else in the
+    IDE's notifications says a project's name changed: without this the next
+    request found no session under the new name, started a second server
+    beside the first, and the pool disposed the old one with its log left
+    behind (Project1-pastree-lsp.log in the default Projects folder). Now the
+    session is RE-KEYED (TLspSessionPool.CheckRenames) and its server
+    restarted for the new .dproj, the log moved with it (FollowRename).
+
+    The callbacks only trigger CheckRenames, which reads the module's
+    FileName itself: whether NewName is the .dproj or the .dpr is not
+    documented, and IOTAProject.FileName is what the sessions are keyed by.
+    Destroyed drops the module before it goes - see TLspSession.ModuleGone. }
+  TProjectRenameNotifier = class(TNotifierObject, IOTANotifier,
+    IOTAModuleNotifier, IOTAModuleNotifier80, IOTAModuleNotifier90)
+  private
+    FSession: TLspSession;   // nil once the session has let go of it
+  public
+    constructor Create(ASession: TLspSession);
+    procedure Destroyed;
+    function CheckOverwrite: Boolean;
+    procedure ModuleRenamed(const NewName: string);
+    function AllowSave: Boolean;
+    function GetOverwriteFileNameCount: Integer;
+    function GetOverwriteFileName(Index: Integer): string;
+    procedure SetSaveFileName(const FileName: string);
+    procedure BeforeRename(const OldFileName, NewFileName: string);
+    procedure AfterRename(const OldFileName, NewFileName: string);
+  end;
+
   TLspSession = class
   private
     FClient: TLspClient;
@@ -1516,9 +1550,22 @@ type
     FLastServerSaid: string;
     FExePath: string;
     // THE PROJECT THIS SESSION IS FOR, as a file name - see
-    // GetOpenProjectByFile for why a name and not an interface. Fixed at
-    // construction: a session never retargets, the pool creates another one.
+    // GetOpenProjectByFile for why a name and not an interface. Set at
+    // construction and changed only when the SAME project is saved under a
+    // new name (Rekey); another project is another session.
     FProjectFile: string;
+    // The project module watched for that rename (AttachModule), its
+    // notifier and the notifier's index. FModule is held only between
+    // AttachModule and DetachModule / ModuleGone - never past the IDE's
+    // Destroyed. FModulePtr is its identity, for the cheap "same module?"
+    // test SessionFor makes per request.
+    FModule: IOTAModule;
+    FModulePtr: Pointer;
+    FModuleNotifier: TProjectRenameNotifier;
+    FModuleNotifierIdx: Integer;
+    // The project file this session had before Rekey, until EnsureSession
+    // restarts the server for the new one and moves the log (FollowRename).
+    FRenamedFrom: string;
     // The configuration the running server was started for; a change means a
     // restart.
     FStartedProject: string;
@@ -1619,6 +1666,12 @@ type
       ARow, ACol: Integer; AIncludeDeclaration, AImplHeaders: Boolean;
       var APendingId: Int64; const AOnDone: TLspHitsProc);
     function Project: IOTAProject;
+    procedure AttachModule(const AProject: IOTAProject);
+    procedure DetachModule;
+    procedure ModuleGone;
+    function MovedTo: string;
+    procedure Rekey(const ANewProjectFile: string);
+    procedure FollowRename(const ANewLogFile: string);
   public
     constructor Create(const AProjectFile: string);
     property ProjectFile: string read FProjectFile;
@@ -1626,6 +1679,9 @@ type
       from the moment its project is first routed to, so "exists" and "can
       answer" are different questions - the group-wide search asks this one. }
     function IsReady: Boolean;
+    // Its client is inside a callback of its own connection - see
+    // TLspClient.IsDispatching. Not to be freed until that unwinds.
+    function IsDispatching: Boolean;
     destructor Destroy; override;
     procedure Prewarm;
     /// <summary>
@@ -1759,6 +1815,16 @@ type
   TLspSessionPool = class
   private
     FSessions: TObjectList<TLspSession>;
+    { Sessions Prune took out of the pool whose client was still dispatching
+      a frame of its own connection when it did. Prune runs from Activate,
+      which every request path calls, so a response callback or notification
+      handler that issues the next request reaches it from INSIDE that
+      session's dispatch - a frame from the old group's server arriving after
+      another group opened. Freeing it there freed the connection holding the
+      very closure on the stack: an access violation writing TLspClient's
+      dispatch depth through a nil Self (TLspClient.Connect's frame closure,
+      2026-11-10). Owned; freed by DisposeDoomed once not dispatching. }
+    FDoomed: TObjectList<TLspSession>;
     // See Destroy: freeing a session fails its outstanding requests, whose
     // callbacks reach the entry points below, and one of those would
     // otherwise build a fresh session - and a whole server process - into a
@@ -1779,6 +1845,20 @@ type
   public
     constructor Create;
     destructor Destroy; override;
+    { Re-keys every session whose project module now has another file name
+      (Save Project As). Cheap - a string per session - and starts nothing:
+      the server follows at the session's next EnsureSession, which
+      FollowRenames asks for at once. True when anything was re-keyed. }
+    function CheckRenames: Boolean;
+    { CheckRenames, then a restart for each re-keyed session whose server is
+      up - so the log follows the project now, not at the next request. The
+      configuration switch ticker calls it: never inside a modal dialog, so
+      after the Save As dialog has closed and the files are written. }
+    procedure FollowRenames;
+    { Whether a session other than AExcept has its project in ADir - the
+      crash log is one per directory, and only follows a project that
+      leaves the directory alone. }
+    function DirectoryInUse(const ADir: string; AExcept: TLspSession): Boolean;
     { The session that should answer for APath: the one whose project owns the
       file, whether or not the IDE has that project selected. A file no
       project claims - an RTL unit, a file opened from disk - has no owner to
@@ -1822,6 +1902,8 @@ type
       current group. Returns it, or nil when no project is active. }
     function Activate: TLspSession;
     procedure Prune;
+    // Frees every doomed session that is no longer dispatching - see FDoomed.
+    procedure DisposeDoomed;
     procedure ForEach(const AProc: TProc<TLspSession>);
   end;
 
@@ -2222,6 +2304,7 @@ constructor TLspSession.Create(const AProjectFile: string);
 begin
   inherited Create;
   FProjectFile := AProjectFile;
+  FModuleNotifierIdx := -1;
   FThreadsOverride := -1;
   FLightOverride := -1;
   FExePath := FindServerExe(PackageDir);
@@ -2249,6 +2332,10 @@ begin
     FinalizeLspSession returns and the BPL unloads. That is precisely the crash
     class the teardown ordering in PasTreeIdePlugin.Wizard exists to prevent. }
   FDestroying := True;
+
+  // The module notifier off the project first: a rename notification for a
+  // freed session would re-key a dangling pointer.
+  DetachModule;
 
   // Client first: it stops the server and joins the reader thread. The
   // document map is only state, but freeing it before the thread that could
@@ -2545,9 +2632,205 @@ begin
   Result := not FDestroying and Assigned(FClient) and FClient.IsReady;
 end;
 
+function TLspSession.IsDispatching: Boolean;
+begin
+  Result := Assigned(FClient) and FClient.IsDispatching;
+end;
+
 function TLspSession.Project: IOTAProject;
 begin
   Result := GetOpenProjectByFile(FProjectFile);
+end;
+
+{ TProjectRenameNotifier }
+
+constructor TProjectRenameNotifier.Create(ASession: TLspSession);
+begin
+  inherited Create;
+  FSession := ASession;
+end;
+
+procedure TProjectRenameNotifier.Destroyed;
+var
+  LKeep: IOTANotifier;
+begin
+  // ModuleGone removes this notifier, which releases the IDE's reference to
+  // it - possibly the last one, while this method is still running.
+  LKeep := Self;
+  if Assigned(FSession) then
+    FSession.ModuleGone;
+end;
+
+function TProjectRenameNotifier.CheckOverwrite: Boolean;
+begin
+  Result := True;   // the IDE's own overwrite prompt decides
+end;
+
+procedure TProjectRenameNotifier.ModuleRenamed(const NewName: string);
+begin
+  if Assigned(FSession) and Assigned(GPool) then
+    GPool.CheckRenames;
+end;
+
+function TProjectRenameNotifier.AllowSave: Boolean;
+begin
+  Result := True;
+end;
+
+function TProjectRenameNotifier.GetOverwriteFileNameCount: Integer;
+begin
+  Result := 0;
+end;
+
+function TProjectRenameNotifier.GetOverwriteFileName(Index: Integer): string;
+begin
+  Result := '';
+end;
+
+procedure TProjectRenameNotifier.SetSaveFileName(const FileName: string);
+begin
+end;
+
+procedure TProjectRenameNotifier.BeforeRename(const OldFileName,
+  NewFileName: string);
+begin
+end;
+
+procedure TProjectRenameNotifier.AfterRename(const OldFileName,
+  NewFileName: string);
+begin
+  if Assigned(FSession) and Assigned(GPool) then
+    GPool.CheckRenames;
+end;
+
+{ Watches AProject's module for a rename - see TProjectRenameNotifier. Called
+  by SessionFor on every routing, so it is a pointer compare when nothing
+  changed; a project closed and reopened is a new module, and the session
+  (which outlives the close) follows it here. }
+procedure TLspSession.AttachModule(const AProject: IOTAProject);
+var
+  LModule: IOTAModule;
+begin
+  if FDestroying or not Assigned(AProject) then
+    Exit;
+  LModule := AProject;
+  if Pointer(LModule) = FModulePtr then
+    Exit;
+  DetachModule;
+  FModuleNotifier := TProjectRenameNotifier.Create(Self);
+  FModuleNotifierIdx := LModule.AddNotifier(FModuleNotifier);
+  FModule := LModule;
+  FModulePtr := Pointer(LModule);
+end;
+
+procedure TLspSession.DetachModule;
+begin
+  if Assigned(FModuleNotifier) then
+    FModuleNotifier.FSession := nil;
+  // The notifier is the IDE's reference to drop; it may free it here, so
+  // the object pointer is not touched again.
+  if Assigned(FModule) and (FModuleNotifierIdx >= 0) then
+    FModule.RemoveNotifier(FModuleNotifierIdx);
+  FModuleNotifier := nil;
+  FModuleNotifierIdx := -1;
+  FModule := nil;
+  FModulePtr := nil;
+end;
+
+{ The module is being destroyed (its project closed): let go of it NOW, the
+  documented duty of Destroyed - a reference held past it is released into
+  freed memory by the next DetachModule. The session itself stays, as on any
+  close (ProjectClosed). }
+procedure TLspSession.ModuleGone;
+begin
+  DetachModule;
+end;
+
+{ The project's file name now, when it is not the one this session is keyed
+  by; '' otherwise and when no module is watched. }
+function TLspSession.MovedTo: string;
+begin
+  Result := '';
+  if not Assigned(FModule) or FDestroying then
+    Exit;
+  Result := FModule.FileName;
+  if SameText(Result, FProjectFile) then
+    Result := '';
+end;
+
+{ The same project under a new file name. Only the key moves here; the
+  server still runs for the old .dproj until EnsureSession restarts it for
+  the new one - FStartedProject now differs - and moves the log on the way
+  (FollowRename). Nothing is started from here: CheckRenames runs inside the
+  IDE's own save. }
+procedure TLspSession.Rekey(const ANewProjectFile: string);
+begin
+  if FRenamedFrom = '' then
+    FRenamedFrom := FProjectFile;
+  // The "server ready" line of this open has been printed; a re-key is not
+  // a new open, and ProjectOpened would otherwise empty the moved log.
+  if SameText(FAnnouncedProject, FProjectFile) then
+    FAnnouncedProject := ANewProjectFile;
+  FProjectFile := ANewProjectFile;
+  TimingLogFmt('project re-keyed: %s -> %s', [FRenamedFrom, FProjectFile]);
+end;
+
+{ EnsureSession's restart after a Rekey: stop the old server, so nothing
+  holds its log, then move the log beside the new .dproj - and the crash log
+  with it when no other project is left in the old folder - and say so in
+  the Build tab and in the moved log. RelocateLogFile renames when it can and
+  copies when a handle is still open (LspTransportSmoke section 6 measures
+  why); a copy leaves the old file saying where the log continues. }
+procedure TLspSession.FollowRename(const ANewLogFile: string);
+var
+  LFrom, LOldLog, LNewLog, LOldDir, LMsg: string;
+  LHow: TLogRelocation;
+  LWasUp: Boolean;
+begin
+  LFrom := FRenamedFrom;
+  FRenamedFrom := '';   // first: Stop runs callbacks, which may come back here
+  // The file the old server WROTE, '' when logging was off: nothing to move.
+  LOldLog := FStartedLogFile;
+  LNewLog := LogPathFor(FProjectFile);
+  LWasUp := FClient.State <> lcsStopped;
+  if LWasUp then
+    FClient.Stop;
+  LHow := RelocateLogFile(LOldLog, LNewLog);
+  if LOldLog <> '' then
+    LOldDir := ExtractFilePath(LOldLog)
+  else
+    LOldDir := ExtractFilePath(LogPathFor(LFrom));
+  if not SameText(LOldDir, ExtractFilePath(LNewLog)) and
+     // %TEMP% holds the fallback crash log of every project with no folder.
+     not SameText(LOldDir, TPath.GetTempPath) and
+     not (Assigned(GPool) and GPool.DirectoryInUse(LOldDir, Self)) then
+    RelocateLogFile(CrashLogPathIn(LOldDir),
+      CrashLogPathIn(ExtractFilePath(LNewLog)));
+  // A session whose server never ran has nothing to restart or move.
+  if not LWasUp and (LHow = lrNothing) then
+    Exit;
+  LMsg := Format('%s was saved as %s - restarting the server for it',
+    [ExtractFileName(LFrom), FProjectFile]);
+  case LHow of
+    lrMoved, lrCopied:
+      LMsg := LMsg + Format('; the log moved here from %s.', [LOldLog]);
+    lrCopiedOldKept:
+      begin
+        LMsg := LMsg + Format('; the log was copied here from %s, which '
+          + 'something still holds open.', [LOldLog]);
+        AppendIdeLogLine(LOldLog, Format('%s was saved as %s - this log '
+          + 'continues in %s.', [ExtractFileName(LFrom), FProjectFile,
+          LNewLog]));
+      end;
+  else
+    LMsg := LMsg + '.';
+  end;
+  // Into the new log when there is one to write into - the moved one, or a
+  // log the new server is about to start; the Build tab either way.
+  if (LHow <> lrNothing) or (ANewLogFile <> '') then
+    LogRestart(LNewLog, LMsg)
+  else
+    LogDiagnostic(LMsg);
 end;
 
 { The platform and configuration a server for AProject is started for - what
@@ -2829,6 +3112,17 @@ begin
      (FStartedUndeclared = LOptions.UndeclaredBehindMissingUnits) and
      (FCheckingStamp <> LStamp) then
     CheckSaved(LStamp);
+  { NOT FROM INSIDE THIS CLIENT'S OWN DISPATCH, after a rename. Stopping the
+    server there defers freeing its connection (RetireConnection), so the old
+    server is still alive and holds its log when FollowRename tries to move
+    it: the move fell back to a copy, and the old file stayed behind with a
+    "continues in" line (2026-11-10, the first Save As of a new project - the
+    restart ran inside the old server's publishDiagnostics). The old server
+    answers this request for the files it already has; the config-switch
+    ticker's FollowRenames restarts it outside any dispatch moments later. }
+  if (FRenamedFrom <> '') and (FClient.State <> lcsStopped) and
+     FClient.IsDispatching then
+    Exit(True);
   if (FClient.State = lcsStopped) or
      not SameText(FStartedProject, LOptions.ProjectFile) or
      not SameText(FStartedPlatform, LPlatform) or
@@ -2840,7 +3134,12 @@ begin
      (FStartedUndeclared <> LOptions.UndeclaredBehindMissingUnits) or
      (FRestartWhy <> '') then
   begin
-    if FClient.State <> lcsStopped then
+    // Saved under a new name (Rekey): the old server stopped and its log
+    // moved here BEFORE the new one starts and opens the log beside the new
+    // .dproj. FollowRename says why the server restarted.
+    if FRenamedFrom <> '' then
+      FollowRename(LOptions.LogFile)
+    else if FClient.State <> lcsStopped then
     begin
       if (FRestartWhy <> '') and
          SameText(FStartedProject, LOptions.ProjectFile) then
@@ -5350,6 +5649,7 @@ constructor TLspSessionPool.Create;
 begin
   inherited Create;
   FSessions := TObjectList<TLspSession>.Create(True);
+  FDoomed := TObjectList<TLspSession>.Create(True);
   FRoutes := TDictionary<string, string>.Create;
 end;
 
@@ -5362,6 +5662,9 @@ begin
   // rather than a session that is being destroyed.
   FDestroying := True;
   GSession := nil;
+  // Unconditionally: the pool dies at package unload, never inside a
+  // dispatch, and a doomed session left alive would keep its server.
+  FreeAndNil(FDoomed);
   FreeAndNil(FSessions);
   FreeAndNil(FRoutes);
   inherited;
@@ -5391,12 +5694,82 @@ begin
   if FDestroying or not Assigned(AProject) then
     Exit;
   LIdx := IndexOf(AProject.FileName);
+  // A MISS MAY BE A RENAME the module notifier has not reported yet (or
+  // reported while the module still had the old name): the session that
+  // holds this project's analysis under its old name is re-keyed rather than
+  // a second server started beside it - see TProjectRenameNotifier.
+  if (LIdx < 0) and CheckRenames then
+    LIdx := IndexOf(AProject.FileName);
   if LIdx >= 0 then
-    Exit(FSessions[LIdx]);
-  // Created, not started: TLspSession.Create spawns nothing, so the cost of
-  // an entry the user never navigates in is one object.
-  Result := TLspSession.Create(AProject.FileName);
-  FSessions.Add(Result);
+    Result := FSessions[LIdx]
+  else
+  begin
+    // Created, not started: TLspSession.Create spawns nothing, so the cost
+    // of an entry the user never navigates in is one object.
+    Result := TLspSession.Create(AProject.FileName);
+    FSessions.Add(Result);
+  end;
+  Result.AttachModule(AProject);
+end;
+
+function TLspSessionPool.CheckRenames: Boolean;
+var
+  LIdx: Integer;
+  LNew: string;
+begin
+  Result := False;
+  if FDestroying then
+    Exit;
+  for LIdx := 0 to FSessions.Count - 1 do
+  begin
+    LNew := FSessions[LIdx].MovedTo;
+    if LNew = '' then
+      Continue;
+    // Another session already holds the new name - one was routed to before
+    // the rename was seen. That one wins; this one stops watching and is
+    // left to Prune, its log where it is.
+    if IndexOf(LNew) >= 0 then
+      FSessions[LIdx].DetachModule
+    else
+    begin
+      FSessions[LIdx].Rekey(LNew);
+      Result := True;
+    end;
+  end;
+  if Result then
+    InvalidateRoutes;
+end;
+
+procedure TLspSessionPool.FollowRenames;
+var
+  LSession: TLspSession;
+  LMoved: TArray<TLspSession>;
+begin
+  if FDestroying then
+    Exit;
+  CheckRenames;
+  // A snapshot: EnsureSession runs callbacks, and the list must not be
+  // walked while one of them could change it.
+  LMoved := nil;
+  for LSession in FSessions do
+    if (LSession.FRenamedFrom <> '') and Assigned(LSession.FClient) and
+       (LSession.FClient.State <> lcsStopped) then
+      LMoved := LMoved + [LSession];
+  for LSession in LMoved do
+    if not FDestroying and FSessions.Contains(LSession) then
+      LSession.EnsureSession;
+end;
+
+function TLspSessionPool.DirectoryInUse(const ADir: string;
+  AExcept: TLspSession): Boolean;
+var
+  LSession: TLspSession;
+begin
+  Result := False;
+  for LSession in FSessions do
+    if (LSession <> AExcept) and SameText(ADir,
+       ExtractFilePath(LogPathFor(LSession.ProjectFile))) then
+      Exit(True);
 end;
 
 function TLspSessionPool.OwningProjectFile(const APath: string): string;
@@ -5484,8 +5857,31 @@ begin
       back through ActiveSession into this very list. By then the doomed
       session must already be out of it and the list must be consistent. }
     LDoomed := FSessions.Extract(FSessions[LIdx]);
-    LDoomed.Free;   // stops its server
+    // Not freed here: this may be running inside LDoomed's own dispatch.
+    // DisposeDoomed frees it now if it is not, else on a later Activate.
+    FDoomed.Add(LDoomed);
     InvalidateRoutes;
+  end;
+  DisposeDoomed;   // stops their servers
+end;
+
+procedure TLspSessionPool.DisposeDoomed;
+var
+  LIdx: Integer;
+  LSession: TLspSession;
+begin
+  if not Assigned(FDoomed) then
+    Exit;
+  for LIdx := FDoomed.Count - 1 downto 0 do
+  begin
+    // Freeing one runs callbacks that may come back here and change the
+    // list; the index is re-checked rather than trusted.
+    if LIdx >= FDoomed.Count then
+      Continue;
+    if FDoomed[LIdx].IsDispatching then
+      Continue;
+    LSession := FDoomed.Extract(FDoomed[LIdx]);
+    LSession.Free;
   end;
 end;
 
@@ -5493,6 +5889,9 @@ function TLspSessionPool.Activate: TLspSession;
 var
   LActive: IOTAProject;
 begin
+  // A session Prune had to leave alive mid-dispatch is freed here, on the
+  // next request or project switch after that dispatch unwound.
+  DisposeDoomed;
   LActive := GetActiveProject;
   { FindProject answers relative to WHICH PROJECT IS ACTIVE - it checks that
     one first - so a file both projects of a group compile routes to whichever
@@ -5640,6 +6039,8 @@ begin
      ((Application.MainFormHandle <> 0) and
       not IsWindowEnabled(Application.MainFormHandle)) then
     Exit;
+  // A project saved under a new name: its server and log follow it now.
+  GPool.FollowRenames;
   LNow := GetTickCount64;
   // Each project of a group has its own active configuration; a session
   // whose project did not move answers csSame and is left alone.

@@ -202,7 +202,13 @@ type
     // or which machine (2026-09-25). AppendLog writes these again when the
     // file turns out SHORTER than it last left it - other writers only
     // append, so that is truncation - and FLogSize is what it last left.
-    FHeaderLines: TArray<string>;
+    // VERBATIM since 0.85.14 (Alex): the text exactly as it was first written,
+    // its timestamps and separator included, and the path inventory with it
+    // (only the four LogHeader lines came back before, so a reopened project
+    // lost its paths) - captured by Log and LogBlock while FCaptureHeader is
+    // on. One line after it says why it is there again.
+    FHeaderText: string;
+    FCaptureHeader: Boolean;
     FLogSize: Int64;
     FStartedAt: TDateTime;
     FDocs: TLspDocumentStore;
@@ -486,7 +492,7 @@ type
     procedure AppendLog(const AText: string);
     procedure Log(const AMsg: string);
     { Log, and remembered as one of the header lines AppendLog repeats in a
-      log that was emptied (FHeaderLines). }
+      log that was emptied (FHeaderText). }
     procedure LogHeader(const AMsg: string);
     { Log only with logDetail on - see FLogDetail for what belongs here. }
     procedure LogDetail(const AMsg: string);
@@ -872,7 +878,7 @@ var
   LBytes: TBytes;
   LWritten: DWORD;
   LTry: Integer;
-  LText, LStamp, LLine: string;
+  LText, LStamp: string;
   LWas, LSize: Int64;
 begin
   // No `LFile := INVALID_HANDLE_VALUE` before the loop: cRetries is a
@@ -902,21 +908,19 @@ begin
     Exit;   // busy for 100 ms; drop the line, keep the log
   try
     LText := AText;
-    // EMPTIED UNDER US - see FHeaderLines. The size this server last left
+    // EMPTIED UNDER US - see FHeaderText. The size this server last left
     // is read BEFORE the file's own: every other writer only appends, so a
     // file found shorter than that was truncated (or replaced), never merely
     // written to by someone else.
     LWas := FLogSize;
-    if FLogStarted and (Length(FHeaderLines) > 0) and
+    if FLogStarted and (FHeaderText <> '') and
        GetFileSizeEx(LFile, LSize) and (LSize < LWas) then
     begin
       LStamp := FormatDateTime('yyyy-mm-dd hh:nn:ss.zzz', Now) + ' ';
-      LText := LStamp + Format('log emptied under a running server (up ' +
-        'since %s) - its header again:',
-        [FormatDateTime('yyyy-mm-dd hh:nn:ss', FStartedAt)]) + sLineBreak;
-      for LLine in FHeaderLines do
-        LText := LText + LStamp + LLine + sLineBreak;
-      LText := LText + AText;
+      LText := FHeaderText + LStamp + Format('project reopened: the log was ' +
+        'emptied under a running server (up since %s) - its header above, ' +
+        'as written then', [FormatDateTime('yyyy-mm-dd hh:nn:ss', FStartedAt)])
+        + sLineBreak + AText;
     end;
     LBytes := TEncoding.UTF8.GetBytes(LText);
     if Length(LBytes) > 0 then
@@ -930,8 +934,12 @@ end;
 
 procedure TLspServer.LogHeader(const AMsg: string);
 begin
-  Log(AMsg);
-  FHeaderLines := FHeaderLines + [AMsg];
+  FCaptureHeader := True;
+  try
+    Log(AMsg);
+  finally
+    FCaptureHeader := False;
+  end;
 end;
 
 procedure TLspServer.LogDetail(const AMsg: string);
@@ -978,6 +986,8 @@ begin
     // and "which run is this" stays answerable.
     LLine := StringOfChar('-', 64) + sLineBreak + LLine;
   end;
+  if FCaptureHeader then
+    FHeaderText := FHeaderText + LLine;
   AppendLog(LLine);
   // After the write, not before: AppendLog decides "unwritable path" by
   // whether anything has ever been logged, and clears FLogPath if not.
@@ -1013,9 +1023,12 @@ begin
     if FLogPath = '' then
       Exit;
     if not FLogStarted then
-      AppendLog(StringOfChar('-', 64) + sLineBreak + LSB.ToString)
+      LLine := StringOfChar('-', 64) + sLineBreak + LSB.ToString
     else
-      AppendLog(LSB.ToString);
+      LLine := LSB.ToString;
+    if FCaptureHeader then
+      FHeaderText := FHeaderText + LLine;
+    AppendLog(LLine);
     if FLogPath <> '' then
       FLogStarted := True;
   finally
@@ -1390,7 +1403,7 @@ begin
   // trees declared, a rename that reaches into the RTL is planned and applied
   // instead of refused, and nothing else in the log would hint at why.
   if Length(FLibraryPaths) = 0 then
-    Log('  no libraryPaths declared - rename will not refuse RTL/VCL or'
+    LogHeader('  no libraryPaths declared - rename will not refuse RTL/VCL or'
       + ' third-party sources on the grounds of where they live');
   // THE PATHS THEMSELVES, not just how many. A count tells you nothing about
   // the failure this actually has: a plausible-looking number of paths that
@@ -1419,7 +1432,13 @@ begin
     LLines := LLines + ['  namespace ' + LItem];
   for LAlias in FAliases do
     LLines := LLines + [Format('  alias %s=%s', [LAlias.Alias, LAlias.UnitName])];
-  LogBlock(LLines);
+  // Part of the header: a reopened project's log gets it back - FHeaderText.
+  FCaptureHeader := True;
+  try
+    LogBlock(LLines);
+  finally
+    FCaptureHeader := False;
+  end;
 end;
 
 { -------- analysis -------- }

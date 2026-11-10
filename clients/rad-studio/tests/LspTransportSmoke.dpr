@@ -361,6 +361,88 @@ begin
   Check(not ProcessAlive(LPid), 'no server process left behind');
 end;
 
+{ 6. A LOG FOLLOWS ITS PROJECT - RelocateLogFile, for Save Project As.
+
+  The measurement first: while a server runs, its stderr handle is open on
+  the log (FILE_SHARE_READ or FILE_SHARE_WRITE, no FILE_SHARE_DELETE), and a
+  rename of the file must fail - if Windows ever let it through, the copy
+  fallback would be dead code and the plugin could simply rename under a
+  live server. Then the three outcomes: a copy while the handle is open (the
+  old file kept, since it cannot be deleted either), a plain rename once the
+  server is gone, and an existing target appended to, never overwritten. }
+procedure TestLogRelocation(const AExe: string);
+var
+  LDir, LOld, LNew, LText: string;
+  LPid: DWORD;
+  LConn: TLspConnection;
+  LMoved: Boolean;
+  LErr: DWORD;
+begin
+  Writeln;
+  Writeln('=== 6. a log follows its project (RelocateLogFile) ===');
+  LDir := TPath.Combine(TPath.GetTempPath, 'pastree-lsp-smoke-relocate');
+  if TDirectory.Exists(LDir) then
+    TDirectory.Delete(LDir, True);
+  TDirectory.CreateDirectory(LDir);
+  LOld := TPath.Combine(LDir, 'Project1-pastree-lsp.log');
+  LNew := TPath.Combine(LDir, 'saved\Renamed-pastree-lsp.log');
+  TFile.WriteAllText(LOld, 'old line' + sLineBreak, TEncoding.ASCII);
+
+  ResetState;
+  LConn := TLspConnection.Create(AExe, ExtractFilePath(AExe), OnFrame, OnGone,
+    LOld);
+  try
+    LPid := LConn.ProcessId;
+    Check(LConn.Send(cInitialize), 'Send(initialize) accepted');
+    Check(PumpUntil(function: Boolean begin Result := GInitialized end,
+      cTimeoutMs), 'server up, its stderr open on the log');
+
+    ForceDirectories(ExtractFilePath(LNew));
+    LMoved := MoveFileEx(PChar(LOld), PChar(LNew), MOVEFILE_COPY_ALLOWED);
+    LErr := GetLastError;
+    Writeln(Format('  rename under a live server: %s (error %d)',
+      [BoolToStr(LMoved, True), LErr]));
+    Check(not LMoved and (LErr = ERROR_SHARING_VIOLATION),
+      'a rename of the open log is refused (sharing violation)');
+    if LMoved then
+      MoveFileEx(PChar(LNew), PChar(LOld), 0);   // put it back for the rest
+
+    Check(RelocateLogFile(LOld, LNew) = lrCopiedOldKept,
+      'under a live server the log is copied, the old file kept');
+    LText := TFile.ReadAllText(LNew);
+    Check(Pos('old line', LText) = 1, 'the copy starts with the old content');
+    Check(FileExists(LOld), 'the old file is still there');
+
+    LConn.Send('{"jsonrpc":"2.0","id":2,"method":"shutdown"}');
+    LConn.Send('{"jsonrpc":"2.0","method":"exit"}');
+    LConn.WaitForExit(5000);
+  finally
+    LConn.Free;
+  end;
+  Check(not ProcessAlive(LPid), 'no server process left behind');
+
+  // Server gone: the plain rename. The target is removed first - the copy
+  // above made it - so this is the case the plugin normally meets.
+  TFile.Delete(LNew);
+  TFile.WriteAllText(LOld, 'old line' + sLineBreak, TEncoding.ASCII);
+  Check(RelocateLogFile(LOld, LNew) = lrMoved,
+    'with no handle open the log is renamed');
+  Check(not FileExists(LOld) and (TFile.ReadAllText(LNew) = 'old line'
+    + sLineBreak), 'the old file is gone, the new one is it');
+
+  // An existing target is appended to.
+  TFile.WriteAllText(LOld, 'second' + sLineBreak, TEncoding.ASCII);
+  Check(RelocateLogFile(LOld, LNew) = lrCopied,
+    'an existing target: copied, the old file deleted');
+  Check(TFile.ReadAllText(LNew) = 'old line' + sLineBreak + 'second'
+    + sLineBreak, 'the target kept its lines, the old ones after them');
+  Check(not FileExists(LOld), 'the old file is gone');
+
+  Check(RelocateLogFile(LOld, LNew) = lrNothing, 'no old file: nothing');
+  Check(RelocateLogFile(LNew, LNew) = lrNothing, 'the same file: nothing');
+  TDirectory.Delete(LDir, True);
+end;
+
 procedure DumpStdErr;
 var
   LPath, LLine: string;
@@ -395,6 +477,7 @@ begin
     TestServerDies(GExe);
     TestMalformedCancel(GExe);
     TestRequestAfterShutdown(GExe);
+    TestLogRelocation(GExe);
     DumpStdErr;
 
     Writeln;
