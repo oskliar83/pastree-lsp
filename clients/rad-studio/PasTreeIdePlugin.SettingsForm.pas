@@ -31,7 +31,10 @@ unit PasTreeIdePlugin.SettingsForm;
   PasTreeIdePlugin.DfmStyleElementsFix). Performance (0.67.0) holds the
   analysis thread count and the Benchmark box - the one place the dialog
   talks to a server (LspBenchmark), because comparing thread counts is only
-  useful with the figures next to the choice.
+  useful with the figures next to the choice. Formatting (0.86.0) is the
+  one tab NOT in the .dfm: it is built in code from the formatter's option
+  table (BuildFormatTab), so an option the library adds needs one line in
+  PasTreeIdePlugin.FormatText and no form edit.
 
   IF YOU ARE EDITING THE .dfm: the only names the code depends on are the ones
   bound below (the checkboxes, their hint labels, the readout labels and the
@@ -62,7 +65,8 @@ uses
   Vcl.Forms,
   Vcl.StdCtrls,
   Vcl.ExtCtrls,
-  Vcl.ComCtrls;
+  Vcl.ComCtrls,
+  PasTreeIdePlugin.FormatText;
 
 type
   TPasTreeSettingsForm = class(TForm)
@@ -169,10 +173,19 @@ type
     // cbxThreads' values, parallel to its items: 0 = Auto, else a count.
     FThreadChoices: TArray<Integer>;
     FBenchmarkStart: UInt64;
+    // The Formatting tab, built in code from cFormatOptions (BuildFormatTab).
+    FFormatSwitch: TCheckBox;
+    FFormatControls: TArray<TControl>;
     function TypeStyles: TFontStyles;
     procedure FillThreads(ACurrent: Integer);
     function SelectedThreads: Integer;
     procedure BenchmarkFinished(AOk: Boolean; const AText: string);
+    procedure FormatDefaultsClick(Sender: TObject);
+    procedure FormatSwitchClick(Sender: TObject);
+  public
+    procedure BuildFormatTab;
+    procedure ShowFormatValues(const AValues: TFormatValues);
+    function FormatValues: TFormatValues;
   end;
 
 var
@@ -490,6 +503,196 @@ begin
   lblBenchmarkStatus.Caption := AText;
 end;
 
+{ THE FORMATTING TAB IS BUILT IN CODE, not in the .dfm: one row of
+  PasTreeIdePlugin.FormatText.cFormatOptions is one control here, so an
+  option the library adds appears on this page with its one line in that
+  table and nothing else. Grouped as the table groups them (indentation,
+  line breaks, spaces, capitalization); a Boolean is a check box, a number
+  an edit with an up-down, a choice a drop-down. Built before the theme is
+  applied (ExecuteSettingsDialog), so the IDE themes these controls with
+  the rest. Scaled from 96 dpi by the form's own PPI. }
+procedure TPasTreeSettingsForm.BuildFormatTab;
+var
+  LTab: TTabSheet;
+  LScroll: TScrollBox;
+  LGroup: TGroupBox;
+  LLabel: TLabel;
+  LCheck: TCheckBox;
+  LCombo: TComboBox;
+  LEdit: TEdit;
+  LUpDown: TUpDown;
+  LButton: TButton;
+  LIdx, LTop, LGroupTop, LRowTop: Integer;
+  LGroupName, LChoice: string;
+  LDef: TFormatOptionDef;
+
+  function S(AValue: Integer): Integer;
+  begin
+    Result := MulDiv(AValue, CurrentPPI, 96);
+  end;
+
+begin
+  SetLength(FFormatControls, Length(cFormatOptions));
+  LTab := TTabSheet.Create(Self);
+  LTab.PageControl := pgcSettings;
+  LTab.Caption := 'Formatting';
+
+  FFormatSwitch := TCheckBox.Create(Self);
+  FFormatSwitch.Parent := LTab;
+  FFormatSwitch.SetBounds(S(16), S(12), S(430), S(17));
+  FFormatSwitch.Caption := 'Format (Ctrl+D; Format Selection with a selection)';
+  FFormatSwitch.OnClick := FormatSwitchClick;
+  LLabel := TLabel.Create(Self);
+  LLabel.Parent := LTab;
+  LLabel.AutoSize := False;
+  LLabel.WordWrap := True;
+  LLabel.SetBounds(S(34), S(32), S(420), S(30));
+  LLabel.Caption := 'The PasTree formatter instead of the IDE''s: indentation, '
+    + 'line breaks, spacing and case; comments and directives untouched. '
+    + 'Off: Ctrl+D is the IDE''s own formatter.';
+
+  LButton := TButton.Create(Self);
+  LButton.Parent := LTab;
+  LButton.SetBounds(S(16), S(66), S(120), S(25));
+  LButton.Caption := 'Reset to defaults';
+  LButton.OnClick := FormatDefaultsClick;
+
+  LScroll := TScrollBox.Create(Self);
+  LScroll.Parent := LTab;
+  LScroll.BorderStyle := bsNone;
+  LScroll.SetBounds(0, S(98), LTab.ClientWidth, LTab.ClientHeight - S(98));
+  LScroll.Anchors := [akLeft, akTop, akRight, akBottom];
+  LScroll.VertScrollBar.Tracking := True;
+
+  LTop := S(4);
+  LGroup := nil;
+  LGroupName := '';
+  LGroupTop := 0;
+  LRowTop := 0;
+  for LIdx := 0 to High(cFormatOptions) do
+  begin
+    LDef := cFormatOptions[LIdx];
+    if (LGroup = nil) or (LDef.Group <> LGroupName) then
+    begin
+      if LGroup <> nil then
+      begin
+        LGroup.Height := LRowTop + S(8);
+        LTop := LGroupTop + LGroup.Height + S(8);
+      end;
+      LGroup := TGroupBox.Create(Self);
+      LGroup.Parent := LScroll;
+      LGroup.Caption := LDef.Group;
+      LGroup.SetBounds(S(12), LTop, S(440), S(40));
+      LGroupName := LDef.Group;
+      LGroupTop := LTop;
+      LRowTop := S(22);
+    end;
+    case LDef.Kind of
+      fokBoolean:
+        begin
+          LCheck := TCheckBox.Create(Self);
+          LCheck.Parent := LGroup;
+          LCheck.SetBounds(S(12), LRowTop, S(416), S(17));
+          LCheck.Caption := LDef.Caption;
+          FFormatControls[LIdx] := LCheck;
+          Inc(LRowTop, S(24));
+        end;
+      fokInteger, fokChoice:
+        begin
+          LLabel := TLabel.Create(Self);
+          LLabel.Parent := LGroup;
+          LLabel.SetBounds(S(12), LRowTop + S(3), S(300), S(15));
+          LLabel.Caption := LDef.Caption;
+          if LDef.Kind = fokInteger then
+          begin
+            LEdit := TEdit.Create(Self);
+            LEdit.Parent := LGroup;
+            LEdit.SetBounds(S(330), LRowTop, S(60), S(23));
+            LEdit.NumbersOnly := LDef.MinValue >= 0;
+            LUpDown := TUpDown.Create(Self);
+            LUpDown.Parent := LGroup;
+            LUpDown.Min := LDef.MinValue;
+            LUpDown.Max := LDef.MaxValue;
+            LUpDown.Associate := LEdit;
+            FFormatControls[LIdx] := LUpDown;
+          end
+          else
+          begin
+            LCombo := TComboBox.Create(Self);
+            LCombo.Parent := LGroup;
+            LCombo.Style := csDropDownList;
+            LCombo.SetBounds(S(330), LRowTop, S(98), S(23));
+            for LChoice in FormatChoices(LDef) do
+              LCombo.Items.Add(LChoice);
+            FFormatControls[LIdx] := LCombo;
+          end;
+          Inc(LRowTop, S(30));
+        end;
+    end;
+  end;
+  if LGroup <> nil then
+    LGroup.Height := LRowTop + S(8);
+end;
+
+procedure TPasTreeSettingsForm.ShowFormatValues(const AValues: TFormatValues);
+var
+  LIdx, LValue: Integer;
+begin
+  for LIdx := 0 to High(FFormatControls) do
+  begin
+    if LIdx < Length(AValues) then
+      LValue := AValues[LIdx]
+    else
+      LValue := cFormatOptions[LIdx].Default;
+    if FFormatControls[LIdx] is TCheckBox then
+      TCheckBox(FFormatControls[LIdx]).Checked := LValue <> 0
+    else if FFormatControls[LIdx] is TUpDown then
+      TUpDown(FFormatControls[LIdx]).Position := LValue
+    else if FFormatControls[LIdx] is TComboBox then
+    begin
+      TComboBox(FFormatControls[LIdx]).ItemIndex := LValue;
+      if TComboBox(FFormatControls[LIdx]).ItemIndex < 0 then
+        TComboBox(FFormatControls[LIdx]).ItemIndex :=
+          cFormatOptions[LIdx].Default;
+    end;
+  end;
+end;
+
+function TPasTreeSettingsForm.FormatValues: TFormatValues;
+var
+  LIdx: Integer;
+begin
+  Result := DefaultFormatValues;
+  for LIdx := 0 to High(FFormatControls) do
+    if FFormatControls[LIdx] is TCheckBox then
+      Result[LIdx] := Ord(TCheckBox(FFormatControls[LIdx]).Checked)
+    else if FFormatControls[LIdx] is TUpDown then
+      Result[LIdx] := TUpDown(FFormatControls[LIdx]).Position
+    else if (FFormatControls[LIdx] is TComboBox) and
+       (TComboBox(FFormatControls[LIdx]).ItemIndex >= 0) then
+      Result[LIdx] := TComboBox(FFormatControls[LIdx]).ItemIndex;
+end;
+
+procedure TPasTreeSettingsForm.FormatDefaultsClick(Sender: TObject);
+begin
+  ShowFormatValues(DefaultFormatValues);
+end;
+
+{ The style means nothing while Ctrl+D is the IDE's formatter - greyed for
+  chkLoggingClick's reason, its values kept for the same one. }
+procedure TPasTreeSettingsForm.FormatSwitchClick(Sender: TObject);
+var
+  LControl: TControl;
+begin
+  for LControl in FFormatControls do
+    if LControl <> nil then
+    begin
+      LControl.Enabled := FFormatSwitch.Checked;
+      if (LControl is TUpDown) and (TUpDown(LControl).Associate <> nil) then
+        TUpDown(LControl).Associate.Enabled := FFormatSwitch.Checked;
+    end;
+end;
+
 function ExecuteSettingsDialog: Boolean;
 var
   LForm: TPasTreeSettingsForm;
@@ -514,6 +717,7 @@ begin
   // the thing left dangling at unload.
   LForm := TPasTreeSettingsForm.Create(Application.MainForm);
   try
+    LForm.BuildFormatTab;
     if LThemed then
       LTheming.ApplyTheme(LForm);
 
@@ -581,6 +785,9 @@ begin
     LForm.chkNoDefaultStyleElements.Checked := LSettings.DfmNoDefaultStyleElems;
     LForm.FillThreads(LSettings.AnalysisThreads);
     LForm.cbxParseMode.ItemIndex := Ord(not LSettings.LightLibraries);
+    LForm.FFormatSwitch.Checked := LSettings.EnableFormat;
+    LForm.ShowFormatValues(LSettings.FormatValues);
+    LForm.FormatSwitchClick(nil);
     // Assigning Checked only fires OnClick when the value CHANGES, so the
     // dependent state is set here rather than relied upon above.
     LForm.chkLoggingClick(nil);
@@ -627,6 +834,8 @@ begin
     LSettings.DfmNoDefaultStyleElems := LForm.chkNoDefaultStyleElements.Checked;
     LSettings.AnalysisThreads := LForm.SelectedThreads;
     LSettings.LightLibraries := LForm.cbxParseMode.ItemIndex <> 1;
+    LSettings.EnableFormat := LForm.FFormatSwitch.Checked;
+    LSettings.FormatValues := LForm.FormatValues;
     SaveSettings(LSettings);
     Result := True;
   finally

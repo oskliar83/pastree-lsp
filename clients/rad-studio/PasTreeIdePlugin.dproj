@@ -141,6 +141,8 @@
         <DCCReference Include="PasTreeIdePlugin.CaretWatch.pas"/>
         <DCCReference Include="PasTreeIdePlugin.ClassComplete.pas"/>
         <DCCReference Include="PasTreeIdePlugin.SyncPrototypes.pas"/>
+        <DCCReference Include="PasTreeIdePlugin.FormatText.pas"/>
+        <DCCReference Include="PasTreeIdePlugin.Format.pas"/>
         <DCCReference Include="PasTreeIdePlugin.AnnotateArgs.pas"/>
         <DCCReference Include="PasTreeIdePlugin.AnnotateArgsForm.pas">
             <Form>PasTreeAnnotateArgsForm</Form>

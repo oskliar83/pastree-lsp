@@ -39,6 +39,7 @@ uses
   PasTree.Preprocessor,
   PasTree.Sema.Project,
   PasTree.Sema.Nav,
+  PasTree.Format,
   PasLsp.ClassComplete,
   PasLsp.SyncPrototypes,
   PasLsp.AnnotateArgs,
@@ -221,6 +222,19 @@ type
       reason: the signature it is asked about was edited a keystroke ago. }
     function SyncPrototypeAt(const AFileName, AText: string;
       APasLine, APasCol: Integer): TLspSyncAnswer;
+    { The formatter's edits for the live buffer (PasTree.Format): AText
+      preprocessed with this engine's defines - the analysis's, as every
+      other buffer request here reads them - and parsed; the whole file's
+      edits, or with ARange those touching [AStart, AEnd) (PasFormatRangeEdits:
+      columns still computed over the whole file). ADiags counts the parse's
+      and the preprocessor's diagnostics: a flagged unit is laid out as
+      written, the rest is formatted. False, nothing to apply, when the
+      preprocessed text is not AText verbatim - the edits' offsets would
+      address another text. }
+    function FormatEdits(const AFileName, AText: string;
+      const AOptions: TPasFormatOptions; ARange: Boolean;
+      AStart, AEnd: Integer; out AEdits: TPasTextEdits;
+      out ADiags: Integer): Boolean;
     (* Argument annotation for the call at the caret - `{Name:}` and
       `{var}`/`{out}` in front of the arguments (PasLsp.AnnotateArgs has the
       rules). The signature-help pipeline exactly: the LIVE text, resolved
@@ -2210,6 +2224,28 @@ begin
   // The answer's positions are in the REPAIRED text; the client edits the
   // original. MergeSemicolonRepairs maps them back and adds the semicolons.
   MergeSemicolonRepairs(Result, LRepairs);
+end;
+
+function TLspCompletionEngine.FormatEdits(const AFileName, AText: string;
+  const AOptions: TPasFormatOptions; ARange: Boolean; AStart, AEnd: Integer;
+  out AEdits: TPasTextEdits; out ADiags: Integer): Boolean;
+var
+  LPre: TPasPreprocessed;
+  LTree: TPasTree;
+  LDiags: TArray<TPasParseDiag>;
+begin
+  AEdits := nil;
+  ADiags := 0;
+  LPre := FPreprocessor.ProcessText(AFileName, AText);
+  if (Length(LPre.Files) = 0) or (LPre.Files[0].Source <> AText) then
+    Exit(False);
+  LTree := TPasParser.ParseFile(LPre, LDiags);
+  ADiags := Length(LDiags) + Length(LPre.Diagnostics);
+  if ARange then
+    AEdits := PasFormatRangeEdits(LTree, 0, AOptions, AStart, AEnd)
+  else
+    AEdits := PasFormatEdits(LTree, 0, AOptions);
+  Result := True;
 end;
 
 function TLspCompletionEngine.SyncPrototypeAt(const AFileName, AText: string;

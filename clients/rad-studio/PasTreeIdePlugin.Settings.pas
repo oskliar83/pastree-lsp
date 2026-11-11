@@ -43,7 +43,8 @@ interface
 
 uses
   System.SysUtils,
-  System.UITypes;   // TColor and TFontStyles without dragging in the VCL
+  System.UITypes,   // TColor and TFontStyles without dragging in the VCL
+  PasTreeIdePlugin.FormatText;   // TFormatValues
 
 /// <summary>
 /// Whether "Find Declaration" is OURS - both the Ctrl+Click gesture
@@ -475,6 +476,11 @@ type
     // a path is fixed costs more than a name the missing unit declares
     // (Alex, 2026-11-03). See UndeclaredBehindMissingUnitsEnabled.
     UndeclaredBehindMissing: Boolean;
+    // Format (Ctrl+D): PasTree's formatter in place of the IDE's, and its
+    // style - one value per PasTreeIdePlugin.FormatText.cFormatOptions row,
+    // stored under the Format subkey by the row's name.
+    EnableFormat: Boolean;
+    FormatValues: TFormatValues;
   end;
 
 function LoadSettings: TPasTreeSettings;
@@ -511,6 +517,13 @@ function LightLibrariesEnabled: Boolean;
 /// server started with the other value.
 /// </summary>
 function UndeclaredBehindMissingUnitsEnabled: Boolean;
+
+/// <summary>Ctrl+D is PasTree's Format (PasTreeIdePlugin.Format); off hands
+/// the key back to the IDE's own formatter.</summary>
+function FormatEnabled: Boolean;
+
+/// <summary>The formatter's style, one value per cFormatOptions row.</summary>
+function FormatOptionValues: TFormatValues;
 
 /// <summary>
 /// Registers the ONE listener called (main thread) after the dialog saved -
@@ -579,6 +592,10 @@ const
   cValueAnalysisThreads = 'AnalysisThreads';
   cValueLightLibraries = 'LightLibraries';
   cValueUndeclaredBehindMissing = 'UndeclaredBehindMissingUnits';
+  cValueFormat = 'EnableFormat';
+  // The formatter's style: a subkey, one value per cFormatOptions row under
+  // the row's own name - the TPasFormatOptions field it is sent as.
+  cFormatSubkey = 'Format';
   // The IDE level ApplyErrorInsightChoice replaced with None, to put back -
   // by name, one of cErrorInsightLevelNames.
   cValueSavedErrorInsightLevel = 'SavedErrorInsightLevel';
@@ -714,6 +731,7 @@ function LoadSettings: TPasTreeSettings;
 var
   LReg: TRegistry;
   LKey: string;
+  LIdx: Integer;
 
   // A value that is absent, or holds something that is not a number, reads
   // as the default. Both are the same case in practice - a key written by an
@@ -777,6 +795,10 @@ begin
   Result.AnalysisThreads := 0;
   Result.LightLibraries := True;
   Result.UndeclaredBehindMissing := True;
+  // The IDE's formatter replaced by default, like every other feature that
+  // takes over an IDE key (the header); the switch hands Ctrl+D back.
+  Result.EnableFormat := True;
+  Result.FormatValues := DefaultFormatValues;
 
   LKey := SettingsRegistryKey;
   if LKey = '' then
@@ -846,6 +868,17 @@ begin
         ReadFlag(LReg, cValueLightLibraries, Result.LightLibraries);
       Result.UndeclaredBehindMissing := ReadFlag(LReg,
         cValueUndeclaredBehindMissing, Result.UndeclaredBehindMissing);
+      Result.EnableFormat := ReadFlag(LReg, cValueFormat, Result.EnableFormat);
+    finally
+      LReg.CloseKey;
+    end;
+    // Each row read on its own: a value missing or out of range is that
+    // row's default, never the whole style's.
+    if LReg.OpenKeyReadOnly(LKey + cFormatSubkey) then
+    try
+      for LIdx := 0 to High(cFormatOptions) do
+        Result.FormatValues[LIdx] := ReadInt(LReg, cFormatOptions[LIdx].Name,
+          Result.FormatValues[LIdx]);
     finally
       LReg.CloseKey;
     end;
@@ -858,6 +891,7 @@ procedure SaveSettings(const ASettings: TPasTreeSettings);
 var
   LReg: TRegistry;
   LKey: string;
+  LIdx: Integer;
   LApply: TProc;
 begin
   // The cache is updated FIRST and unconditionally: a registry that cannot be
@@ -924,6 +958,16 @@ begin
           Ord(ASettings.LightLibraries));
         LReg.WriteInteger(cValueUndeclaredBehindMissing,
           Ord(ASettings.UndeclaredBehindMissing));
+        LReg.WriteInteger(cValueFormat, Ord(ASettings.EnableFormat));
+      finally
+        LReg.CloseKey;
+      end;
+      if LReg.OpenKey(LKey + cFormatSubkey, True) then
+      try
+        for LIdx := 0 to High(cFormatOptions) do
+          if LIdx < Length(ASettings.FormatValues) then
+            LReg.WriteInteger(cFormatOptions[LIdx].Name,
+              ASettings.FormatValues[LIdx]);
       finally
         LReg.CloseKey;
       end;
@@ -1594,6 +1638,16 @@ end;
 function AnalysisThreadCount: Integer;
 begin
   Result := CurrentSettings.AnalysisThreads;
+end;
+
+function FormatEnabled: Boolean;
+begin
+  Result := CurrentSettings.EnableFormat;
+end;
+
+function FormatOptionValues: TFormatValues;
+begin
+  Result := CurrentSettings.FormatValues;
 end;
 
 function LightLibrariesEnabled: Boolean;

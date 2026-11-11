@@ -88,6 +88,8 @@ uses
   PasTree.Sema.Dfm,
   PasTree.Dfm,
   PasTree.Outline,
+  PasTree.Format,
+  PasLsp.Formatting,
   PasLsp.Protocol,
   PasLsp.Documents,
   PasLsp.Completion,
@@ -356,6 +358,15 @@ type
     // The completion seam's engine (PasLsp.Completion) - configuration-
     // derived, so created lazily once and kept for the session.
     FCompletion: TLspCompletionEngine;
+    // The formatter's configuration (PasLsp.Formatting): the `formatting`
+    // member of initializationOptions, replaced by each
+    // workspace/didChangeConfiguration that carries one. FFormatSet names
+    // the fields it set - an IndentStep configured here beats a request's
+    // tabSize, one left to the default does not (HandleFormatting).
+    FFormatOptions: TPasFormatOptions;
+    FFormatIdentCase: Boolean;
+    FFormatSet: TArray<string>;
+    FFormatInsertSpacesSaid: Boolean;
     FSession: TPasAsyncSession;     // in-flight analysis, nil when idle
     FDirty: Boolean;                // docs changed since FSession started
     FCancels: TLspCancelSet;        // shared with the reader thread
@@ -640,6 +651,14 @@ type
       TArray<Integer>>; ARefused: TDictionary<Int64, string>);
     function HandleUsesRemoval(const AMsg: TLspIncoming): string;
     function HandleOnTypeFormatting(const AMsg: TLspIncoming): string;
+    procedure ApplyFormatConfig(AJson: TJSONValue; const AFrom: string);
+    procedure HandleDidChangeConfiguration(AParams: TJSONValue);
+    function FormatIdentCaseEdits(const APath, AText: string;
+      const AOptions: TPasFormatOptions; ARange: Boolean;
+      AStart, AEnd: Integer; out AEdits: TPasTextEdits): Boolean;
+    function HandleFormatting(const AMsg: TLspIncoming;
+      ARange: Boolean): string;
+    function HandleFormatOptions(const AMsg: TLspIncoming): string;
     function HandlePrepareRename(const AMsg: TLspIncoming): string;
     function HandleRename(const AMsg: TLspIncoming): string;
     function HandleRenamePlan(const AMsg: TLspIncoming): string;
@@ -811,6 +830,7 @@ begin
   FPromoteRebuilt.Sorted := True;
   FPromoteRebuilt.Duplicates := dupIgnore;
   FLightLibraries := True;
+  FFormatOptions := TPasFormatOptions.Default;
   FPlatform := pfWin64;
   FCompilerVersion := DEFAULT_COMPILER_VERSION;
   FTrace := GetEnvironmentVariable('PASTREE_LSP_TRACE') <> '';
@@ -1213,6 +1233,8 @@ begin
     FUndeclaredBehindMissing :=
       AOptions.GetValue<Boolean>('undeclaredBehindMissingUnits', False);
   end;
+  // The formatter's style: the `formatting` member, absent = the library's
+  // default. Logged by ApplyFormatConfig once the log path is known - below.
   // HERE, before anything creates a TPasSemaProject: its constructor pins
   // the pool at the default width, and the pin is first-caller-wins for the
   // process. PasTree takes a POOL below 2 as 2 - the load engine needs a
@@ -1259,6 +1281,10 @@ begin
      IfThen(FAnalysisThreads = 0, 'auto, one per logical core',
        IfThen(FPoolWidth = 1, 'set by the client, sequential',
          'set by the client'))]));
+  if AOptions is TJSONObject then
+    ApplyFormatConfig(AOptions.FindValue('formatting'), 'initializationOptions')
+  else
+    ApplyFormatConfig(nil, 'initializationOptions');
 
   FInitProjectFile := LProjectFile;
   FInitPlatform := LPlatformStr;
@@ -4076,6 +4102,9 @@ begin
       // closer. \n is the trigger the protocol was designed around for
       // exactly this (the LSP spec's own example is inserting a closer).
       '"documentOnTypeFormattingProvider":{"firstTriggerCharacter":"\n"},' +
+      // The formatter (PasTree.Format) - see HandleFormatting.
+      '"documentFormattingProvider":true,' +
+      '"documentRangeFormattingProvider":true,' +
       '"renameProvider":{"prepareProvider":true}' +
     // pastreeVersion is ours, not LSP's. It rides along inside serverInfo
     // because a client's real question is never "which server build is this"
@@ -7392,6 +7421,255 @@ end;
   declaration's full extent yet. Navigation and the tree are correct; what
   suffers is breadcrumb tracking as the cursor moves inside a body, which
   needs a real span (a nav-side NodeSpan belongs in PasTree, not here). }
+{ The formatter's configuration, from initializationOptions or a
+  workspace/didChangeConfiguration: TPasFormatOptions' fields by name
+  (PasLsp.Formatting), everything not named back at the library's default -
+  a configuration replaces the one before, it does not patch it. What was set
+  and what was skipped go to the log: a misspelt option that silently does
+  nothing is the one failure a user cannot see. }
+procedure TLspServer.ApplyFormatConfig(AJson: TJSONValue; const AFrom: string);
+var
+  LProblems: TArray<string>;
+  LProblem: string;
+begin
+  FFormatOptions := TPasFormatOptions.Default;
+  FFormatIdentCase := False;
+  FFormatSet := nil;
+  LProblems := nil;
+  ApplyFormatJson(FFormatOptions, FFormatIdentCase, AJson, FFormatSet,
+    LProblems);
+  if Length(FFormatSet) > 0 then
+    Log(Format('formatting: %s sets %s', [AFrom,
+      string.Join(', ', FFormatSet)]));
+  for LProblem in LProblems do
+    Log(Format('formatting: %s - %s; ignored', [AFrom, LProblem]));
+end;
+
+{ workspace/didChangeConfiguration: `settings.formatting`, or
+  `settings.pastree.formatting` for a client that sends its whole settings
+  tree (VS Code's section). Anything else in it is not read here - the rest
+  of the configuration is fixed at initialize, and a client that changes it
+  restarts the server (the IDE plugin does). }
+procedure TLspServer.HandleDidChangeConfiguration(AParams: TJSONValue);
+var
+  LSettings, LSection: TJSONValue;
+begin
+  if AParams = nil then
+    Exit;
+  LSettings := AParams.FindValue('settings');
+  if not (LSettings is TJSONObject) then
+    Exit;
+  LSection := LSettings.FindValue('formatting');
+  if LSection = nil then
+    LSection := LSettings.FindValue('pastree.formatting');
+  if LSection <> nil then
+    ApplyFormatConfig(LSection, 'workspace/didChangeConfiguration');
+end;
+
+{ Identifier case (IdentifierCase on): every identifier spelled as its
+  declaration is, which only the analysis knows - so the tree formatted is
+  the ANALYSIS's own, and only when it was built from exactly this text
+  (the document's buffer); otherwise False and the caller formats the
+  buffer without it. A name that resolves to nothing, or to a declaration
+  spelled other than by case, keeps its spelling (PasFormatEdits refuses a
+  change beyond case anyway). Called after WaitAnalyzed and EnsureFileFull,
+  on the main thread, like every handler that reads a model. }
+function TLspServer.FormatIdentCaseEdits(const APath, AText: string;
+  const AOptions: TPasFormatOptions; ARange: Boolean; AStart, AEnd: Integer;
+  out AEdits: TPasTextEdits): Boolean;
+var
+  LMid: Integer;
+  LTree: TPasTree;
+  LNav: TPasNavigator;
+  LProject: TPasSemaProject;
+  LCase: TPasIdentCaseFunc;
+begin
+  Result := False;
+  AEdits := nil;
+  if (FNav = nil) or (FProject = nil) then
+    Exit;
+  LMid := FNav.ModelIdOf(APath);
+  if LMid < 0 then
+    Exit;
+  LTree := FProject.Model(LMid).Tree;
+  if (Length(LTree.Source.Files) = 0) or
+     (LTree.Source.Files[0].Source <> AText) then
+    Exit;
+  LNav := FNav;
+  LProject := FProject;
+  LCase :=
+    function(AVis: Integer; const AWord: string): string
+    var
+      LLine, LCol, LTMid, LSym: Integer;
+      LName: string;
+    begin
+      Result := AWord;
+      if (AVis < 0) or (AVis > High(LTree.Source.Visible)) or
+         (LTree.Source.Visible[AVis].FileId <> 0) then
+        Exit;
+      LTree.Source.Files[0].OffsetToLineCol(LTree.Source.Files[0].Tokens[
+        LTree.Source.Visible[AVis].TokenIndex].Start, LLine, LCol);
+      if not LNav.SymbolAt(LMid, LLine, LCol, LTMid, LSym, LName) then
+      begin
+        // A compiler builtin (Integer, Length, True): its seed's spelling.
+        if not LNav.BuiltinNameAt(LMid, LLine, LCol, LName, LTMid, LSym) then
+          Exit;
+        if (LTMid >= 0) and (LSym >= 0) then
+          LName := LProject.Model(LTMid).Symbols[LSym].Name;
+      end;
+      if SameText(LName, AWord) then
+        Result := LName;
+    end;
+  if ARange then
+    AEdits := PasFormatRangeEdits(LTree, 0, AOptions, AStart, AEnd, LCase)
+  else
+    AEdits := PasFormatEdits(LTree, 0, AOptions, LCase);
+  Result := True;
+end;
+
+{ textDocument/formatting and textDocument/rangeFormatting - the formatter
+  (PasTree.Format) over the document's CURRENT text: the open buffer, the
+  file only for a document not open. A .dcu's generated text is never
+  formatted (it is read-only in every client); an empty answer is [].
+
+  THE OPTIONS, in this order: the library's default; the configuration
+  (initializationOptions / didChangeConfiguration, `formatting`); the
+  request's own FormattingOptions members named after a field - LSP lets a
+  client add any; and tabSize as IndentStep unless the configuration or the
+  request named IndentStep itself - a configured step is deliberate, an
+  editor's tab size is a default. insertSpaces=false is logged once and
+  otherwise ignored: the formatter writes spaces only.
+
+  THE TEXT is preprocessed with the analysis's defines and parsed on the
+  spot (TLspCompletionEngine.FormatEdits) - no WaitAnalyzed, so a format
+  never waits out a rebuild. With IdentifierCase on it does wait, for the
+  analysis's own tree (FormatIdentCaseEdits), and falls back to the buffer
+  without identifier case when that tree is not of this text.
+
+  A RANGE keeps the whole-file edits touching it (PasFormatRangeEdits: a
+  gap belongs to the token after it, so a selection re-indents its first
+  line and leaves the line after it alone). }
+function TLspServer.HandleFormatting(const AMsg: TLspIncoming;
+  ARange: Boolean): string;
+var
+  LPath, LText, LHow, LProblem: string;
+  LDoc: TLspDocument;
+  LOpts: TPasFormatOptions;
+  LIdent: Boolean;
+  LSet, LProblems: TArray<string>;
+  LReq: TJSONValue;
+  LTab, LStart, LEnd, LDiags, LSL, LSC, LEL, LEC: Integer;
+  LEdits: TPasTextEdits;
+  LTick: UInt64;
+begin
+  LPath := DocPathOf(AMsg.Params);
+  if LPath = '' then
+    Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
+      AMsg.Method + ': textDocument.uri required'));
+  LTick := GetTickCount64;
+  if TPasSourceManager.IsDcuPath(LPath) then
+    Exit(BuildResponse(AMsg.IdJson, '[]'));
+  if FDocs.TryGet(LPath, LDoc) then
+    LText := LDoc.Text
+  else if not TryReadTextNoBom(LPath, LText) then
+    LText := '';
+  if LText = '' then
+    Exit(BuildResponse(AMsg.IdJson, '[]'));
+
+  LOpts := FFormatOptions;
+  LIdent := FFormatIdentCase;
+  LSet := FFormatSet;
+  LProblems := nil;
+  LReq := AMsg.Params.FindValue('options');
+  ApplyFormatJson(LOpts, LIdent, LReq, LSet, LProblems);
+  for LProblem in LProblems do
+    Log(Format('%s: options - %s; ignored', [AMsg.Method, LProblem]));
+  if (LReq <> nil) and not NameListed(LSet, 'IndentStep') then
+  begin
+    LTab := LReq.GetValue<Integer>('tabSize', 0);
+    if LTab > 0 then
+      LOpts.IndentStep := LTab;
+  end;
+  if (LReq <> nil) and not LReq.GetValue<Boolean>('insertSpaces', True) and
+     not FFormatInsertSpacesSaid then
+  begin
+    FFormatInsertSpacesSaid := True;
+    Log(AMsg.Method + ': insertSpaces=false - the formatter indents with '
+      + 'spaces only, tabSize spaces a step');
+  end;
+
+  LStart := 0;
+  LEnd := Length(LText);
+  if ARange then
+  begin
+    if not AMsg.Params.TryGetValue<Integer>('range.start.line', LSL) or
+       not AMsg.Params.TryGetValue<Integer>('range.start.character', LSC) or
+       not AMsg.Params.TryGetValue<Integer>('range.end.line', LEL) or
+       not AMsg.Params.TryGetValue<Integer>('range.end.character', LEC) then
+      Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
+        AMsg.Method + ': range required'));
+    LspRangeToOffsets(LText, LSL, LSC, LEL, LEC, LStart, LEnd);
+  end;
+
+  LDiags := 0;
+  LEdits := nil;
+  LHow := '';
+  if LIdent then
+  begin
+    if not WaitAnalyzed(LPath, AMsg.IdJson) or
+       not EnsureFileFull(LPath, AMsg.Method) then
+      Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
+    if FormatIdentCaseEdits(LPath, LText, LOpts, ARange, LStart, LEnd,
+      LEdits) then
+      LHow := 'the analysis tree, identifier case'
+    else
+      LHow := 'the buffer, no identifier case (the analysis is not of this '
+        + 'text)';
+  end;
+  if (LHow = '') or not LHow.StartsWith('the analysis') then
+  begin
+    if FCompletion = nil then
+      FCompletion := TLspCompletionEngine.Create(FPlatform, FSearchPaths,
+        FDefines, FCompilerVersion);
+    SyncCompletionOverlays;
+    try
+      if not FCompletion.FormatEdits(LPath, LText, LOpts, ARange, LStart,
+        LEnd, LEdits, LDiags) then
+      begin
+        Log(Format('%s: %s - the preprocessed text is not the document''s, '
+          + 'nothing formatted', [AMsg.Method, TPath.GetFileName(LPath)]));
+        Exit(BuildResponse(AMsg.IdJson, '[]'));
+      end;
+    except
+      on E: Exception do
+        Exit(BuildError(AMsg.IdJson, LSP_INTERNAL_ERROR,
+          AMsg.Method + ' failed: ' + E.Message));
+    end;
+    if LHow = '' then
+      LHow := 'the buffer';
+  end;
+  Log(Format('%s: %s -> %d edit(s) in %d ms (%s, indent %d%s)',
+    [AMsg.Method, TPath.GetFileName(LPath), Length(LEdits),
+     GetTickCount64 - LTick, LHow, LOpts.IndentStep,
+     IfThen(LDiags > 0, Format(', %d parse diagnostic(s): flagged units kept '
+       + 'as written', [LDiags]), '')]));
+  Result := BuildResponse(AMsg.IdJson, FormatEditsJson(LText, LEdits));
+end;
+
+{ pastree/formatOptions - OUR request: every TPasFormatOptions field with the
+  library's default and with the value configured now, by the names the
+  configuration takes. What a client builds its options page from, or checks
+  its own table against (the IDE plugin's harness does: a field the library
+  adds shows up here before it shows up in the plugin). }
+function TLspServer.HandleFormatOptions(const AMsg: TLspIncoming): string;
+begin
+  Result := BuildResponse(AMsg.IdJson, Format(
+    '{"defaults":%s,"configured":%s,"identifierCase":%s}',
+    [FormatOptionsJson(TPasFormatOptions.Default),
+     FormatOptionsJson(FFormatOptions),
+     BoolToStr(FFormatIdentCase, True).ToLower]));
+end;
+
 { textDocument/onTypeFormatting - block completion, standard LSP: the client
   declares us for the "\n" trigger (see HandleInitialize), sends the caret
   right after Enter, and gets zero or one TextEdit inserting the missing
@@ -10033,6 +10311,11 @@ begin
         HandleDidChangeWatchedFiles(LMsg.Params);
         Exit;
       end;
+      if LMsg.Method = 'workspace/didChangeConfiguration' then
+      begin
+        HandleDidChangeConfiguration(LMsg.Params);
+        Exit;
+      end;
       if LMsg.Method = 'textDocument/didSave' then
         Exit;   // we advertise no save interest; harmless if sent anyway
       if LMsg.Method = 'textDocument/definition' then
@@ -10073,6 +10356,12 @@ begin
         Exit(HandleUseUnit(LMsg));
       if LMsg.Method = 'textDocument/onTypeFormatting' then
         Exit(HandleOnTypeFormatting(LMsg));
+      if LMsg.Method = 'textDocument/formatting' then
+        Exit(HandleFormatting(LMsg, {ARange} False));
+      if LMsg.Method = 'textDocument/rangeFormatting' then
+        Exit(HandleFormatting(LMsg, {ARange} True));
+      if LMsg.Method = 'pastree/formatOptions' then
+        Exit(HandleFormatOptions(LMsg));
       if LMsg.Method = 'textDocument/typeDefinition' then
         Exit(HandleTypeDefinition(LMsg));
       if LMsg.Method = 'textDocument/documentHighlight' then

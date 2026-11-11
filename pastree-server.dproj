@@ -169,6 +169,7 @@
         <DCCReference Include="source\PasLsp.Documents.pas"/>
         <DCCReference Include="source\PasLsp.Completion.pas"/>
         <DCCReference Include="source\PasLsp.ClassComplete.pas"/>
+        <DCCReference Include="source\PasLsp.Formatting.pas"/>
         <DCCReference Include="source\PasLsp.XmlDoc.pas"/>
         <DCCReference Include="source\PasLsp.ProductVersion.pas"/>
         <DCCReference Include="source\PasLsp.Version.pas"/>

@@ -494,7 +494,10 @@ const
   /// an older library ranks `Acc := O as |` by O alone.
   /// 0.174.10 (2026-11-09): a fresh `(` in a Boolean position ranks nothing
   /// - an older library puts the Boolean values first after `if (|`.
-  cMinPasTreeVersion = '0.174.10';
+  /// 0.178.0 (2026-11-10): the formatter - PasFormatEdits with identifier
+  /// case, PasFormatRangeEdits, PasFormatText (PasTree.Format); an older
+  /// library does not have the unit.
+  cMinPasTreeVersion = '0.178.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

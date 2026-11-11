@@ -26,7 +26,8 @@ uses
   System.Generics.Collections,   // TJSONArray.GetValue<T> inlines through it
   PasTreeIdePlugin.LspClient,
   PasTreeIdePlugin.OutlineRows,  // the Go To table's reader, checked in 5d-ter
-  PasTreeIdePlugin.NavSymbols;   // the navigation toolbar's tree, ditto
+  PasTreeIdePlugin.NavSymbols,    // the navigation toolbar's tree, ditto
+  PasTreeIdePlugin.FormatText;    // Format's options and edits, 5i
 
 const
   { The server this repo's own build.bat produces, as a path RELATIVE to the
@@ -4736,6 +4737,246 @@ begin
     'and carries symbols from other units');
 end;
 
+{ 5i. The formatter over the wire: textDocument/formatting and
+  rangeFormatting (PasLsp.Formatting, PasTree.Format). Each answer is
+  applied through the PLUGIN's own code (PasTreeIdePlugin.FormatText -
+  UTF-8 byte offsets, the whitespace-only check), so a position the server
+  converts wrongly - a line break, a two-byte character before an edit -
+  fails here as it would in the editor. Then: the result formats to no
+  edit at all (the conversion and the library agree), it holds the same
+  tokens, a range leaves the line after it alone, and the options reach
+  the server by every route - the request's members, tabSize, a
+  configuration that names IndentStep. Last, pastree/formatOptions
+  against the plugin's table: a field the library has and the table lacks,
+  or a default that differs, fails here. }
+procedure TestFormatting;
+var
+  LFile, LText, LNow, LServerJson, LPluginJson: string;
+  LUnitFile, LUnitText: string;
+  LValues: TFormatValues;
+  LDefaults, LPlugin: TJSONValue;
+  LPair: TJSONPair;
+  LIdx: Integer;
+  LAllKnown, LAllSame: Boolean;
+
+  function FormatParams(AOptions: TJSONObject): TJSONObject;
+  var
+    LDoc: TJSONObject;
+  begin
+    Result := TJSONObject.Create;
+    LDoc := TJSONObject.Create;
+    LDoc.AddPair('uri', PathToLspUri(LFile));
+    Result.AddPair('textDocument', LDoc);
+    Result.AddPair('options', AOptions);
+  end;
+
+  function RangeParams(AOptions: TJSONObject; AFirst, ALast: Integer): TJSONObject;
+  var
+    LRange, LPos: TJSONObject;
+  begin
+    Result := FormatParams(AOptions);
+    LRange := TJSONObject.Create;
+    LPos := TJSONObject.Create;
+    LPos.AddPair('line', TJSONNumber.Create(AFirst));
+    LPos.AddPair('character', TJSONNumber.Create(0));
+    LRange.AddPair('start', LPos);
+    LPos := TJSONObject.Create;
+    LPos.AddPair('line', TJSONNumber.Create(ALast));
+    LPos.AddPair('character', TJSONNumber.Create(1000));
+    LRange.AddPair('end', LPos);
+    Result.AddPair('range', LRange);
+  end;
+
+  function TabOnly(ATab: Integer): TJSONObject;
+  begin
+    Result := TJSONObject.Create;
+    Result.AddPair('tabSize', TJSONNumber.Create(ATab));
+    Result.AddPair('insertSpaces', TJSONBool.Create(True));
+  end;
+
+  // The last answer applied to AText as the plugin applies it - '' when
+  // the plugin would refuse it.
+  function Applied(const AText: string): string;
+  var
+    LResult: TJSONValue;
+    LBytes: TArray<TFormatByteEdit>;
+    LError: string;
+    LBuf: UTF8String;
+  begin
+    Result := '';
+    LResult := TJSONObject.ParseJSONValue(GResultJson);
+    try
+      LBuf := UTF8String(AText);
+      if FormatByteEdits(LBuf, ParseFormatEdits(LResult), LBytes, LError) then
+        Result := UTF8ToString(ApplyFormatByteEdits(LBuf, LBytes))
+      else
+        Writeln('  -- refused: ' + LError);
+    finally
+      LResult.Free;
+    end;
+  end;
+
+  procedure Configure(const AFormatting: string);
+  var
+    LParams, LSettings: TJSONObject;
+  begin
+    LSettings := TJSONObject.Create;
+    LSettings.AddPair('formatting',
+      TJSONObject.ParseJSONValue(AFormatting) as TJSONObject);
+    LParams := TJSONObject.Create;
+    LParams.AddPair('settings', LSettings);
+    GClient.Notify('workspace/didChangeConfiguration', LParams);
+  end;
+
+  function Squeezed(const AText: string): string;
+  begin
+    Result := AText.Replace(' ', '').Replace(#13, '').Replace(#10, '');
+  end;
+
+begin
+  Writeln;
+  Writeln('=== 5i. formatting and rangeFormatting ===');
+  LFile := TPath.Combine(GFixtureDir, 'DemoFormat.pas');
+  // Line 8 holds a two-byte character in a string before two gaps the
+  // formatter rewrites on the same line.
+  LText :=
+    'unit DemoFormat;'#13#10 +
+    'interface'#13#10 +
+    'procedure P(A:Integer);'#13#10 +
+    'implementation'#13#10 +
+    'procedure P(A:Integer);'#13#10 +
+    'var S:string;X:Integer;'#13#10 +
+    'begin'#13#10 +
+    'if A>0 then X:=1 else X:=2;'#13#10 +
+    'S:=''' + #$0416 + ''';X:=A;'#13#10 +
+    'end;'#13#10 +
+    'end.'#13#10;
+  SendDidOpenText(LFile, LText);
+  Check(Ask('textDocument/formatting',
+    FormatParams(FormatRequestOptions(DefaultFormatValues))),
+    'formatting answered');
+  LNow := Applied(LText);
+  Writeln(LNow);
+  Check(GOk and (LNow <> '') and (LNow <> LText),
+    'the edits apply through the plugin''s byte offsets');
+  Check(LNow.Contains('procedure P(A: Integer);') and
+    LNow.Contains(#13#10'  if A > 0 then'#13#10'    X := 1'#13#10'  else'#13#10'    X := 2;'),
+    'spacing, one statement per line, the statement after then / else one step in');
+  Check(LNow.Contains(#13#10'  S := ''' + #$0416 + ''';'#13#10'  X := A;'),
+    'the line with a two-byte character is split and spaced');
+  Check(Squeezed(LNow) = Squeezed(LText), 'the same tokens, whitespace aside');
+
+  SendDidOpenText(LFile, LNow);
+  Check(Ask('textDocument/formatting',
+    FormatParams(FormatRequestOptions(DefaultFormatValues))) and
+    (GResultJson = '[]'), 'the result formats to no edit');
+
+  // Lines 7 .. 7 (0-based): the if statement; line 8 is left as written.
+  SendDidOpenText(LFile, LText);
+  Check(Ask('textDocument/rangeFormatting',
+    RangeParams(FormatRequestOptions(DefaultFormatValues), 7, 7)),
+    'rangeFormatting answered');
+  LNow := Applied(LText);
+  Check(LNow.Contains(#13#10'  if A > 0 then'#13#10'    X := 1') and
+    LNow.Contains(#13#10'S:=''' + #$0416 + ''';X:=A;'#13#10) and
+    LNow.Contains(#13#10'var S:string;X:Integer;'#13#10),
+    'the range is formatted, the lines around it are not');
+
+  // tabSize alone: the indent step.
+  Check(Ask('textDocument/formatting', FormatParams(TabOnly(3))),
+    'formatting with tabSize 3');
+  LNow := Applied(LText);
+  Check(LNow.Contains(#13#10'   if A > 0 then'#13#10'      X := 1'),
+    'tabSize is the indent step when nothing names IndentStep');
+
+  // A configuration naming IndentStep beats tabSize; a case by name.
+  Configure('{"IndentStep":4,"ReservedWordCase":"upper","NoSuchOption":true}');
+  Check(Ask('textDocument/formatting', FormatParams(TabOnly(2))),
+    'formatting after didChangeConfiguration');
+  LNow := Applied(LText);
+  Check(LNow.Contains(#13#10'    IF A > 0 THEN'#13#10'        X := 1'),
+    'the configured IndentStep beats tabSize, ReservedWordCase "upper" applies');
+
+  // The request's own member beats the configuration.
+  LValues := DefaultFormatValues;
+  LValues[FormatOptionIndex('IndentStep')] := 1;
+  Check(Ask('textDocument/formatting',
+    FormatParams(FormatRequestOptions(LValues))), 'formatting with IndentStep 1');
+  LNow := Applied(LText);
+  Check(LNow.Contains(#13#10' if A > 0 then'#13#10'  X := 1'),
+    'a request''s IndentStep beats the configuration, its case too');
+
+  // An empty configuration is the default again.
+  Configure('{}');
+  Check(Ask('pastree/formatOptions', TJSONObject.Create) and
+    GResultJson.Contains('"configured":{"IndentStep":2,'),
+    'an empty configuration is the library''s default again');
+
+  // IdentifierCase: the analysis's own tree, through the navigator - a
+  // parameter written `aname` in the body is spelled as declared. A unit
+  // of the closure, with its text as an overlay, so the analysis is of
+  // exactly the buffer formatted.
+  LUnitFile := TPath.Combine(GFixtureDir, 'DemoUnit.pas');
+  LUnitText := TFile.ReadAllText(LUnitFile);
+  SendDidOpenText(LUnitFile, LUnitText.Replace('''Hello, '' + AName',
+    '''Hello, '' + aname'));
+  LFile := LUnitFile;
+  LValues := DefaultFormatValues;
+  LValues[FormatOptionIndex('IdentifierCase')] := 1;
+  Check(Ask('textDocument/formatting',
+    FormatParams(FormatRequestOptions(LValues))) and
+    GResultJson.Contains('"newText":"AName"'),
+    'IdentifierCase: a use is spelled as its declaration');
+  SendDidOpenText(LUnitFile, LUnitText);
+
+  // The plugin's table against the library's fields.
+  Check(Ask('pastree/formatOptions', TJSONObject.Create),
+    'pastree/formatOptions answered');
+  LServerJson := '';
+  LDefaults := nil;
+  LPlugin := FormatRequestOptions(DefaultFormatValues);
+  try
+    LDefaults := TJSONObject.ParseJSONValue(GResultJson);
+    LAllKnown := (LDefaults <> nil) and
+      (LDefaults.FindValue('defaults') is TJSONObject);
+    LAllSame := LAllKnown;
+    if LAllKnown then
+      for LPair in TJSONObject(LDefaults.FindValue('defaults')) do
+      begin
+        LIdx := FormatOptionIndex(LPair.JsonString.Value);
+        if LIdx < 0 then
+        begin
+          Writeln('  -- not in cFormatOptions: ' + LPair.JsonString.Value);
+          LAllKnown := False;
+          Continue;
+        end;
+        LServerJson := LPair.JsonValue.ToJSON;
+        LPluginJson := TJSONObject(LPlugin).GetValue(
+          cFormatOptions[LIdx].Name).ToJSON;
+        if not SameText(LServerJson, LPluginJson) then
+        begin
+          Writeln(Format('  -- %s: library default %s, plugin default %s',
+            [cFormatOptions[LIdx].Name, LServerJson, LPluginJson]));
+          LAllSame := False;
+        end;
+      end;
+    Check(LAllKnown, 'every TPasFormatOptions field has its row in cFormatOptions');
+    Check(LAllSame, 'with the library''s default');
+    LAllKnown := LDefaults <> nil;
+    for LIdx := 0 to High(cFormatOptions) do
+      if (cFormatOptions[LIdx].Name <> 'IdentifierCase') and (LDefaults <> nil)
+         and (LDefaults.FindValue('defaults.' + cFormatOptions[LIdx].Name) = nil) then
+      begin
+        Writeln('  -- not a TPasFormatOptions field: ' + cFormatOptions[LIdx].Name);
+        LAllKnown := False;
+      end;
+    Check(LAllKnown, 'and every row names a field');
+  finally
+    LDefaults.Free;
+    LPlugin.Free;
+  end;
+end;
+
 { 5h. Block completion over the wire: textDocument/onTypeFormatting with the
   newline trigger. Both sides of the trigger rule from PasLsp.BlockClose:
   a file one closer short with the opener on the last code line above the
@@ -5789,6 +6030,7 @@ begin
       TestUnsavedUnit;
       TestWorkspaceSymbol;
       TestOnTypeFormatting;
+      TestFormatting;
       TestCancelHygiene;
       TestUnusedUnits(GExe);
       TestIncludeEdits(GExe);

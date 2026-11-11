@@ -26,6 +26,7 @@ uses
   PasLsp.UseUnit in 'source\PasLsp.UseUnit.pas',
   PasLsp.UnusedUnits in 'source\PasLsp.UnusedUnits.pas',
   PasLsp.BlockClose in 'source\PasLsp.BlockClose.pas',
+  PasLsp.Formatting in 'source\PasLsp.Formatting.pas',
   PasLsp.XmlDoc in 'source\PasLsp.XmlDoc.pas',
   PasLsp.ProductVersion in 'source\PasLsp.ProductVersion.pas',
   PasLsp.Version in 'source\PasLsp.Version.pas',

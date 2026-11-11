@@ -48,6 +48,7 @@ interface
 uses
   System.SysUtils,   // TProc, for LspSetSessionRestartListener
   ToolsAPI,
+  PasTreeIdePlugin.FormatText,    // TFormatValues, TFormatEdit
   PasTreeIdePlugin.OutlineRows;   // TLspOutlineRow and the table reader
 
 type
@@ -1226,6 +1227,23 @@ procedure LspClassComplete(const AFileName: string; ARow, ACol: Integer;
 procedure LspSyncPrototypes(const AFileName: string; ARow, ACol: Integer;
   const AOnDone: TLspSyncPrototypesProc);
 
+type
+  TLspFormatProc = reference to procedure(ASuccess: Boolean;
+    const AEdits: TArray<TFormatEdit>; const AError: string);
+
+/// <summary>
+/// The formatter over AFileName's buffer: textDocument/formatting, or with
+/// ARange textDocument/rangeFormatting from (AStartRow, AStartCol) to
+/// (AEndRow, AEndCol), IDE coordinates. AValues are the style
+/// (PasTreeIdePlugin.FormatText), sent in the request's FormattingOptions -
+/// so a change on the options page holds from the next Ctrl+D, with no
+/// server restart. The document is synced first: the text formatted is the
+/// one on screen.
+/// </summary>
+procedure LspFormat(const AFileName: string; ARange: Boolean;
+  AStartRow, AStartCol, AEndRow, AEndCol: Integer;
+  const AValues: TFormatValues; const AOnDone: TLspFormatProc);
+
 /// <summary>
 /// Argument annotation at a caret: `{Name:}` and `{var}`/`{out}` in front of
 /// the argument the caret is in, or of every argument when the caret is on
@@ -1724,6 +1742,9 @@ type
       const AOnDone: TLspClassCompleteProc);
     procedure SyncPrototypes(const AFileName: string; ARow, ACol: Integer;
       const AOnDone: TLspSyncPrototypesProc);
+    procedure FormatDocument(const AFileName: string; ARange: Boolean;
+      AStartRow, AStartCol, AEndRow, AEndCol: Integer;
+      const AValues: TFormatValues; const AOnDone: TLspFormatProc);
     procedure AnnotateArgs(const AFileName: string; ARow, ACol: Integer;
       const AOptions: TLspAnnotateOptions;
       const AOnDone: TLspAnnotateArgsProc);
@@ -3713,6 +3734,55 @@ begin
         AOnDone(True, ParseSyncPrototypes(AResult), '')
       else
         AOnDone(False, Default(TLspSyncPrototypes), AError);
+    end);
+end;
+
+{ textDocument/formatting or rangeFormatting. Synced first, as class
+  completion is: the text the user sees is the text formatted, and the
+  answer's positions address it. No supersede slot - a deliberate key. }
+procedure TLspSession.FormatDocument(const AFileName: string; ARange: Boolean;
+  AStartRow, AStartCol, AEndRow, AEndCol: Integer;
+  const AValues: TFormatValues; const AOnDone: TLspFormatProc);
+var
+  LParams, LDoc, LRange, LPos: TJSONObject;
+  LLine, LChar: Integer;
+  LMethod: string;
+begin
+  if not EnsureSession then
+  begin
+    AOnDone(False, nil, 'no LSP server available');
+    Exit;
+  end;
+  FDocs.Sync;
+  LDoc := TJSONObject.Create;
+  LDoc.AddPair('uri', PathToLspUri(AFileName));
+  LParams := TJSONObject.Create;
+  LParams.AddPair('textDocument', LDoc);
+  LParams.AddPair('options', FormatRequestOptions(AValues));
+  LMethod := 'textDocument/formatting';
+  if ARange then
+  begin
+    LMethod := 'textDocument/rangeFormatting';
+    LRange := TJSONObject.Create;
+    IdeToLsp(AStartRow, AStartCol, LLine, LChar);
+    LPos := TJSONObject.Create;
+    LPos.AddPair('line', TJSONNumber.Create(LLine));
+    LPos.AddPair('character', TJSONNumber.Create(LChar));
+    LRange.AddPair('start', LPos);
+    IdeToLsp(AEndRow, AEndCol, LLine, LChar);
+    LPos := TJSONObject.Create;
+    LPos.AddPair('line', TJSONNumber.Create(LLine));
+    LPos.AddPair('character', TJSONNumber.Create(LChar));
+    LRange.AddPair('end', LPos);
+    LParams.AddPair('range', LRange);
+  end;
+  FClient.Request(LMethod, LParams,
+    procedure(ASuccess: Boolean; AResult: TJSONValue; const AError: string)
+    begin
+      if ASuccess then
+        AOnDone(True, ParseFormatEdits(AResult), '')
+      else
+        AOnDone(False, nil, AError);
     end);
 end;
 
@@ -6682,6 +6752,22 @@ begin
     Exit;
   end;
   LSession.SyncPrototypes(AFileName, ARow, ACol, AOnDone);
+end;
+
+procedure LspFormat(const AFileName: string; ARange: Boolean;
+  AStartRow, AStartCol, AEndRow, AEndCol: Integer;
+  const AValues: TFormatValues; const AOnDone: TLspFormatProc);
+var
+  LSession: TLspSession;
+begin
+  LSession := SessionForRequest(AFileName);
+  if LSession = nil then
+  begin
+    AOnDone(False, nil, 'LSP session not initialized');
+    Exit;
+  end;
+  LSession.FormatDocument(AFileName, ARange, AStartRow, AStartCol, AEndRow,
+    AEndCol, AValues, AOnDone);
 end;
 
 procedure LspAnnotateArgs(const AFileName: string; ARow, ACol: Integer;

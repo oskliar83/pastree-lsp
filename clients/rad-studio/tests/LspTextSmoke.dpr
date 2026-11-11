@@ -24,11 +24,13 @@ program LspTextSmoke;
 
 uses
   System.SysUtils,
+  System.JSON,
   PasLsp.Protocol,
   PasLsp.XmlDoc,
   PasTreeIdePlugin.DirectiveText,
   PasTreeIdePlugin.TokenShift,
-  PasTreeIdePlugin.ConfigSwitch;
+  PasTreeIdePlugin.ConfigSwitch,
+  PasTreeIdePlugin.FormatText;
 
 var
   GFailures: Integer;
@@ -462,6 +464,97 @@ begin
     'the line: both');
 end;
 
+{ PasTreeIdePlugin.FormatText: the options as the request carries them, and
+  the server's LSP edits turned into edits of the buffer's UTF-8 bytes - a
+  BOM before line 0, a two-byte character before an edit on its line, the
+  refusals that keep a stale answer out of the buffer, and the caret's
+  mapping through the edits. LspClientSmoke applies a real server's answer
+  through the same functions. }
+procedure TestFormatText;
+var
+  LJson: TJSONObject;
+  LText: string;
+  LBuf, LOut: UTF8String;
+  LEdits: TArray<TFormatEdit>;
+  LBytes: TArray<TFormatByteEdit>;
+  LError: string;
+  LValues: TFormatValues;
+
+  function Edit(ALine, AChar, AEndLine, AEndChar: Integer;
+    const AText: string): TFormatEdit;
+  begin
+    Result.Line := ALine;
+    Result.Character := AChar;
+    Result.EndLine := AEndLine;
+    Result.EndCharacter := AEndChar;
+    Result.Text := AText;
+  end;
+
+begin
+  Writeln;
+  Writeln('=== FormatText: request options and byte edits ===');
+  LJson := FormatRequestOptions(DefaultFormatValues);
+  try
+    LText := LJson.ToJSON;
+  finally
+    LJson.Free;
+  end;
+  Check(LText.Contains('"tabSize":2') and LText.Contains('"insertSpaces":true'),
+    'tabSize is the indent step, spaces');
+  Check(LText.Contains('"IndentStep":2') and
+    LText.Contains('"BeginOnNewLine":true') and
+    LText.Contains('"StatementAfterThenDo":"Always"') and
+    LText.Contains('"ReservedWordCase":"Lower"') and
+    LText.Contains('"CompilerDirectiveCase":"Upper"') and
+    LText.Contains('"IdentifierCase":false'),
+    'every row by its field name, in the server''s shapes');
+  LValues := DefaultFormatValues;
+  LValues[FormatOptionIndex('IndentStep')] := 4;
+  LValues[FormatOptionIndex('ReservedWordCase')] := 1;
+  LJson := FormatRequestOptions(LValues);
+  try
+    LText := LJson.ToJSON;
+  finally
+    LJson.Free;
+  end;
+  Check(LText.Contains('"tabSize":4') and LText.Contains('"IndentStep":4')
+    and LText.Contains('"ReservedWordCase":"Upper"'),
+    'a changed step and a changed case are sent');
+
+  // BOM + `S := 'Zh';  Y := 1;` CRLF `    Z;` - Zh is one UTF-16 unit and
+  // two UTF-8 bytes, so the first edit's character 9 is byte 3 + 10.
+  LBuf := UTF8String(#$FEFF + 'S := ''' + #$0416 + ''';  Y := 1;'#13#10'    Z;');
+  LEdits := [Edit(0, 9, 0, 11, #13#10), Edit(1, 0, 1, 4, '  ')];
+  Check(FormatByteEdits(LBuf, LEdits, LBytes, LError), 'the edits fit: ' + LError);
+  Check((Length(LBytes) = 2) and (LBytes[0].Start = 13) and (LBytes[0].Stop = 15)
+    and (LBytes[1].Start = 24) and (LBytes[1].Stop = 28),
+    'byte offsets: after the BOM and the two-byte character');
+  LOut := ApplyFormatByteEdits(LBuf, LBytes);
+  Check(LOut = UTF8String(#$FEFF + 'S := ''' + #$0416 + ''';'#13#10 +
+    'Y := 1;'#13#10'  Z;'), 'applied: the line split, the indent shrunk');
+  Check(MapOffsetThroughEdits(14, LBytes) = 15,
+    'a caret inside a re-laid gap lands on the token after it');
+  Check(MapOffsetThroughEdits(13, LBytes) = 13,
+    'a caret at a gap''s start stays after the token before');
+  Check(MapOffsetThroughEdits(28, LBytes) = 26,
+    'a caret after an edit moves by its difference');
+
+  Check(not FormatByteEdits(LBuf, [Edit(0, 9, 0, 12, ' ')], LBytes, LError)
+    and LError.Contains('not whitespace'),
+    'an edit over code is refused - the buffer moved');
+  Check(FormatByteEdits(LBuf, [Edit(0, 0, 0, 1, 's')], LBytes, LError) and
+    (LBytes[0].Start = 3) and (LBytes[0].Stop = 4),
+    'a word''s case is the formatter''s too (ReservedWordCase) - accepted');
+  Check(not FormatByteEdits(LBuf, [Edit(0, 0, 0, 1, 'T')], LBytes, LError),
+    'another word is not a case change - refused');
+  Check(not FormatByteEdits(LBuf, [Edit(1, 0, 1, 4, ''), Edit(0, 9, 0, 11, '')],
+    LBytes, LError), 'edits out of order are refused');
+  Check(not FormatByteEdits(LBuf, [Edit(5, 0, 5, 1, '')], LBytes, LError),
+    'an edit past the last line is refused');
+  Check(FormatByteEdits(LBuf, nil, LBytes, LError) and (Length(LBytes) = 0),
+    'no edits: nothing to apply');
+end;
+
 begin
   GFailures := 0;
   TestUri;
@@ -472,6 +565,7 @@ begin
   TestInheritedKeyword;
   TestTokenShift;
   TestConfigSwitch;
+  TestFormatText;
 
   Writeln;
   if GFailures = 0 then

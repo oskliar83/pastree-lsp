@@ -86,6 +86,7 @@ uses
   PasTreeIdePlugin.DfmStyleElementsFix,
   PasTreeIdePlugin.ClassComplete,
   PasTreeIdePlugin.SyncPrototypes,
+  PasTreeIdePlugin.Format,
   PasTreeIdePlugin.AnnotateArgs,
   PasTreeIdePlugin.BlockClose,
   PasTreeIdePlugin.EditorWindowHook,
@@ -166,6 +167,8 @@ type
     function ActionOf(Sender: TObject): TAction;
     procedure OnRenameExecute(Sender: TObject);
     procedure OnRenameUpdate(Sender: TObject);
+    procedure OnFormatExecute(Sender: TObject);
+    procedure OnFormatUpdate(Sender: TObject);
     procedure OnAnnotateArgsExecute(Sender: TObject);
     procedure OnAnnotateArgsUpdate(Sender: TObject);
     procedure OnFindTypeDeclarationExecute(Sender: TObject);
@@ -279,6 +282,19 @@ begin
   LAction.ShortCut := ShortCut(Ord('A'), [ssCtrl, ssShift]);
   LAction.OnUpdate := OnAnnotateArgsUpdate;
   LAction.OnExecute := OnAnnotateArgsExecute;
+  LAction.Enabled := True;
+  LAction.ActionList := FActionList;
+
+  // Format / Format Selection (PasTreeIdePlugin.Format): one item whose
+  // caption follows the selection, as Ctrl+D itself does. A LABEL, NOT A
+  // BINDING - Rename's note above.
+  LAction := TAction.Create(FActionList);
+  LAction.Name := 'PasTreeFormat';
+  LAction.Caption := 'Format';
+  LAction.Category := 'PasTreeFormat';
+  LAction.ShortCut := ShortCut(Ord('D'), [ssCtrl]);
+  LAction.OnUpdate := OnFormatUpdate;
+  LAction.OnExecute := OnFormatExecute;
   LAction.Enabled := True;
   LAction.ActionList := FActionList;
 
@@ -723,6 +739,24 @@ begin
   ExecuteRename(FEditorServices.TopView);
 end;
 
+procedure TMenuManager.OnFormatUpdate(Sender: TObject);
+var
+  LSelection: Boolean;
+begin
+  // Hidden when off, Rename's reason: Ctrl+D is then the IDE's again.
+  TAction(Sender).Visible := FormatEnabled;
+  TAction(Sender).Enabled := CanFormatView(FEditorServices.TopView, LSelection);
+  if LSelection then
+    TAction(Sender).Caption := 'Format Selection'
+  else
+    TAction(Sender).Caption := 'Format';
+end;
+
+procedure TMenuManager.OnFormatExecute(Sender: TObject);
+begin
+  FormatView(FEditorServices.TopView);
+end;
+
 procedure TMenuManager.OnAnnotateArgsUpdate(Sender: TObject);
 var
   LAction: TAction;
@@ -941,6 +975,7 @@ begin
   // the only way to take it over).
   InitializeClassComplete;
   InitializeSyncPrototypes;
+  InitializeFormat;
   // "Annotate argument(s)" - a menu item (AddActions), so only the
   // teardown guard to arm here.
   InitializeAnnotateArgs;
@@ -1022,6 +1057,7 @@ begin
   // closures gated off - see the GAlive flags in each unit).
   FinalizeClassComplete;
   FinalizeSyncPrototypes;
+  FinalizeFormat;
   FinalizeAnnotateArgs;
   FinalizeGoTo;
   FinalizeUnitPicker;

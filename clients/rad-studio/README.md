@@ -1147,7 +1147,7 @@ unreliable here.
 
 ## Keyboard bindings: one `IOTAKeyboardBinding` for the whole package
 
-Every key this plugin takes - Ctrl+G, Ctrl+F12, Alt+F11, Ctrl+Shift+C,
+Every key this plugin takes - Ctrl+G, Ctrl+F12, Alt+F11, Ctrl+D, Ctrl+Shift+C,
 Ctrl+Shift+E, Ctrl+Shift+A, Ctrl+Shift+Q, Ctrl+Shift+Up/Down - goes through ONE `IOTAKeyboardBinding`,
 `PasTreeIdePlugin.KeyBindings`, registered once after every feature has
 handed it a key (`RegisterKey`) and removed once, first thing at unload. A

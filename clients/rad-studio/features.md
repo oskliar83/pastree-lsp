@@ -293,6 +293,27 @@ if you keep typing while it is in flight, and Enter itself is never swallowed -
 if the IDE's own block completion is enabled in Editor Options, both would
 insert, and this is the one with an off switch.
 
+### Format (Ctrl+D)
+
+Ctrl+D lays out the active unit with the PasTree formatter - indentation, line
+breaks, spacing inside a line and the case of reserved words, directives and
+compiler directive names. With a selection it formats the selected lines only
+(Format Selection), the way the IDE's own Ctrl+D does; the editor menu has the
+same item, captioned by the selection. Only whitespace between tokens changes:
+comments, directives, inactive `{$IFDEF}` branches and strings are untouched,
+and a statement the parser could not read (the one being typed) is left as
+written. The whole format is one undoable step, the caret stays on its token
+and its line keeps its place on the screen. The text formatted is the buffer
+as it is on screen, not the file; if you type while the server answers,
+nothing is changed and the Build tab says to press it again.
+
+Settings > Formatting: the switch (off gives Ctrl+D back to the IDE's
+formatter) and the style, grouped as indentation, line breaks, spaces and
+capitalization, with Reset to defaults. "Identifiers as declared" spells
+every identifier as its declaration does; it waits for the analysis, so it
+is off by default. A change holds from the next Ctrl+D - the style rides
+along with each request, no server restart.
+
 ## Diagnostics and feedback
 
 ### Type names in their own colour
