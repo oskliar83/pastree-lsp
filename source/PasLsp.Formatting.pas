@@ -18,7 +18,10 @@ unit PasLsp.Formatting;
   shape, is skipped and reported, never fatal: a client newer than the
   library must not lose the formatting it can have.
 
-  IdentifierCase is the one member that is not a field: identifier case is
+  IdentifierCase and FormatDcuText are the two members that are not
+  fields. FormatDcuText (default true) puts a compiled unit's generated
+  interface text through PasFormatText in this style (the server's
+  DcuTextFilter). Identifier case is
   an argument of PasFormatEdits (TPasIdentCaseFunc), answerable only by a
   caller that resolves names - the server does, through the navigator, when
   this is true. The standard LSP FormattingOptions members (tabSize,
@@ -42,11 +45,11 @@ uses
   PasTree.Format;
 
 { AJson's members applied to AOptions by field name (see the header);
-  AIdentCase takes the IdentifierCase member. Each member applied is added
+  AIdentCase takes the IdentifierCase member, ADcuText FormatDcuText. Each member applied is added
   to ASet (as the field's own spelling), each one skipped to AProblems with
   the reason. AJson nil or not an object changes nothing. }
 procedure ApplyFormatJson(var AOptions: TPasFormatOptions;
-  var AIdentCase: Boolean; AJson: TJSONValue; var ASet: TArray<string>;
+  var AIdentCase, ADcuText: Boolean; AJson: TJSONValue; var ASet: TArray<string>;
   var AProblems: TArray<string>);
 
 { Every field of AOptions as one JSON object text, in declaration order, in
@@ -78,6 +81,7 @@ uses
 
 const
   cIdentifierCase = 'IdentifierCase';
+  cFormatDcuText = 'FormatDcuText';
   // FormattingOptions' own members (LSP 3.17): read by the handler or not
   // at all, never an error.
   cLspStandard: TArray<string> = ['tabSize', 'insertSpaces',
@@ -140,7 +144,7 @@ begin
 end;
 
 procedure ApplyFormatJson(var AOptions: TPasFormatOptions;
-  var AIdentCase: Boolean; AJson: TJSONValue; var ASet: TArray<string>;
+  var AIdentCase, ADcuText: Boolean; AJson: TJSONValue; var ASet: TArray<string>;
   var AProblems: TArray<string>);
 var
   LCtx: TRttiContext;
@@ -167,6 +171,17 @@ begin
       begin
         AIdentCase := TJSONBool(LValue).AsBoolean;
         ASet := ASet + [cIdentifierCase];
+      end
+      else
+        AProblems := AProblems + [LName + ': true or false expected'];
+      Continue;
+    end;
+    if SameText(LName, cFormatDcuText) then
+    begin
+      if LValue is TJSONBool then
+      begin
+        ADcuText := TJSONBool(LValue).AsBoolean;
+        ASet := ASet + [cFormatDcuText];
       end
       else
         AProblems := AProblems + [LName + ': true or false expected'];

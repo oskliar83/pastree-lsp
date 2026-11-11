@@ -239,7 +239,7 @@ IDE plugin first, VS Code second), not by protocol order.
 | `textDocument/prepareRename` | the identifier's own span, and the earliest refusal |
 | `textDocument/rename` | symbol: `changes`; unit: `documentChanges` with a `rename` file operation |
 | `textDocument/onTypeFormatting` | block completion: `\n` is the one trigger; Enter after an unclosed opener answers up to TWO TextEdits - the caret line re-indented to the body indent, then the closer ([PasLsp.BlockClose](source/PasLsp.BlockClose.pas)) |
-| `textDocument/formatting`, `textDocument/rangeFormatting` | the PasTree formatter (0.86.0, PasTree 0.178.0 `PasFormatEdits` / `PasFormatRangeEdits`) over the document's CURRENT text - the open buffer, the file only when not open; a `.dcu`'s generated text answers `[]`. The buffer is preprocessed with the analysis's defines and parsed on the spot (no wait for an analysis); the answer is refused (`[]`, a log line) if the preprocessed text is not the buffer verbatim, since the edits' offsets address it. Edits only ever rewrite whitespace between tokens; a range keeps the whole file's edits whose gap's NEXT token is in it (the selection's first line re-indented, the line after it untouched). OPTIONS, in order: `TPasFormatOptions.Default`; the `formatting` object of the initializationOptions or of a `workspace/didChangeConfiguration` (`settings.formatting` or `settings.pastree.formatting`; each replaces the last); the request's own `FormattingOptions` members named after a field; and `tabSize` as `IndentStep` unless the configuration or the request named `IndentStep`. Member names ARE the `TPasFormatOptions` field names, read through RTTI ([PasLsp.Formatting](source/PasLsp.Formatting.pas)) - a field the library adds is configurable with no server change: a number for an Integer, true/false for a Boolean, an enumeration by its value's name with or without the prefix (`fcUpper`, `Upper`, `upper`). An unknown member or a wrong shape is logged and skipped. `insertSpaces: false` is logged once and ignored: the formatter writes spaces. `IdentifierCase: true` (not a field) spells every identifier as its declaration through the navigator - the analysis's own tree, so it waits for the analysis, and falls back to the buffer without it when that tree is not of this text |
+| `textDocument/formatting`, `textDocument/rangeFormatting` | the PasTree formatter (0.86.0, PasTree 0.178.0 `PasFormatEdits` / `PasFormatRangeEdits`) over the document's CURRENT text - the open buffer, the file only when not open; a `.dcu`'s generated text answers `[]`. The buffer is preprocessed with the analysis's defines and parsed on the spot (no wait for an analysis); the answer is refused (`[]`, a log line) if the preprocessed text is not the buffer verbatim, since the edits' offsets address it. Edits only ever rewrite whitespace between tokens; a range keeps the whole file's edits whose gap's NEXT token is in it (the selection's first line re-indented, the line after it untouched). OPTIONS, in order: `TPasFormatOptions.Default`; the `formatting` object of the initializationOptions or of a `workspace/didChangeConfiguration` (`settings.formatting` or `settings.pastree.formatting`; each replaces the last); the request's own `FormattingOptions` members named after a field; and `tabSize` as `IndentStep` unless the configuration or the request named `IndentStep`. Member names ARE the `TPasFormatOptions` field names, read through RTTI ([PasLsp.Formatting](source/PasLsp.Formatting.pas)) - a field the library adds is configurable with no server change: a number for an Integer, true/false for a Boolean, an enumeration by its value's name with or without the prefix (`fcUpper`, `Upper`, `upper`). An unknown member or a wrong shape is logged and skipped. `insertSpaces: false` is logged once and ignored: the formatter writes spaces. `FormatDcuText` (not a field, default true) puts a compiled unit's generated text through `PasFormatText` in the configured style (see Open questions). `IdentifierCase: true` (not a field) spells every identifier as its declaration through the navigator - the analysis's own tree, so it waits for the analysis, and falls back to the buffer without it when that tree is not of this text |
 | `pastree/formatOptions` | OURS: `{"defaults": {...}, "configured": {...}, "identifierCase": bool}` - every `TPasFormatOptions` field with the library's default and the value configured now, in the shapes the configuration takes. The RAD Studio client's harness checks its option table against it |
 | `pastree/classComplete` | OURS, not LSP: the bodies a buffer's declarations are missing (Ctrl+Shift+C). Optional `position` (the scope, see below) and `bodyOrder` - `alphabetical` (default) or `declaration`, where a new body goes among its type's existing ones |
 | `pastree/syncPrototypes` | OURS, not LSP: the routine at a position, its signature mirrored onto its other half (the first half of Ctrl+Shift+C in the RAD Studio client). At most one edit, and unlike classComplete's it REPLACES - the range has a real end ([PasLsp.SyncPrototypes](source/PasLsp.SyncPrototypes.pas)) |
@@ -1159,18 +1159,16 @@ for", and that the prefix cannot drift from the request it describes.
 
 ## Open questions
 
-- **A `.dcu`'s generated text in the user's style** (PasTree's formatter,
-  stage F7) - NOT WIRED, blocked on the library. PasTree 0.177.0 gives
-  `TPasSourceManager.DcuTextFilter` (set it to `PasFormatText` with the
-  configured options) and a `LoadFileTolerant` overload taking the same
-  filter, and the filter must reach EVERY reader of a generated text at
-  once - the analysis's, the completion engine's, `pastree/dcuSource`'s -
-  or navigation lands on lines of a text the client is not showing. The
-  analysis's manager is `TPasSemaProject`'s private `FSM`, with no
-  accessor and no pass-through; it needs one (a `DcuTextFilter` property
-  on `TPasSemaProject` that sets its manager's and is carried to a
-  project built from it as a donor) before the server can wire the
-  three together.
+- ~~A `.dcu`'s generated text in the user's style~~ - **DONE in 0.87.0**
+  (PasTree 0.179.3 `TPasAsyncSession.SetDcuTextFilter`): every project the
+  server builds gets `PasFormatText` in the configured style as its
+  `DcuTextFilter` (the full session before `Start`, `NewConfiguredProject`;
+  the incremental and promotion sessions carry the project's), and every
+  .dcu text handed out - `pastree/dcuSource`, the disk text of a `.dcu`
+  didOpen - goes through `LoadFileTolerant` with the CURRENT project's
+  filter, so positions agree. `FormatDcuText: false` in `formatting` turns
+  it off; a configuration change reaches the .dcu text at the next full
+  analysis.
 - ~~stdio vs named pipe for the IDE plugin~~ - **ANSWERED: stdio**, the
   plugin owning the child's pipes (`PasTreeIdePlugin.LspTransport`).
 - ~~how much of `TPasAsyncSession` is reusable~~ - **ANSWERED: all of it**;

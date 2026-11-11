@@ -497,7 +497,10 @@ const
   /// 0.178.0 (2026-11-10): the formatter - PasFormatEdits with identifier
   /// case, PasFormatRangeEdits, PasFormatText (PasTree.Format); an older
   /// library does not have the unit.
-  cMinPasTreeVersion = '0.178.0';
+  /// 0.179.3 (2026-11-11): TPasAsyncSession.SetDcuTextFilter and F5's
+  /// wrapping and alignment options - an older library has no way to put a
+  /// .dcu's text through the formatter before a full analysis.
+  cMinPasTreeVersion = '0.179.3';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

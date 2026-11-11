@@ -61,12 +61,18 @@ const
   cFormatLineBreaks = 'Line breaks';
   cFormatSpaces = 'Spaces';
   cFormatCase = 'Capitalization';
+  cFormatWrap = 'Wrapping and alignment';
+  cFormatDcu = 'Compiled units';
   cFormatCaseChoices = 'Lower,Upper,Keep';
 
   { TPasFormatOptions, field by field, with TPasFormatOptions.Default -
     PasTree's docs/formatter.md sec. 6. IdentifierCase is the server's own
-    option (identifier case through the navigator), off by default. }
-  cFormatOptions: array[0..18] of TFormatOptionDef = (
+    option (identifier case through the navigator), off by default, and so
+    is FormatDcuText (a compiled unit's generated text in this style), on.
+    The style reaches the server in each request, and in the
+    initializationOptions for the .dcu text - which the analysis reads
+    once, so a change there holds from the next server start. }
+  cFormatOptions: array[0..24] of TFormatOptionDef = (
     (Name: 'IndentStep'; Group: cFormatIndentation; Caption: 'Indent step (spaces)'; Kind: fokInteger; Default: 2; MinValue: 1; MaxValue: 16),
     (Name: 'TabWidth'; Group: cFormatIndentation; Caption: 'Tab width when reading a tab-indented line'; Kind: fokInteger; Default: 8; MinValue: 1; MaxValue: 16),
     (Name: 'IndentNestedRoutines'; Group: cFormatIndentation; Caption: 'Indent nested routines'; Kind: fokBoolean; Default: 1),
@@ -85,7 +91,13 @@ const
     (Name: 'ReservedWordCase'; Group: cFormatCase; Caption: 'Reserved words'; Kind: fokChoice; Default: 0; Choices: cFormatCaseChoices),
     (Name: 'DirectiveWordCase'; Group: cFormatCase; Caption: 'Directives (override, read, ...)'; Kind: fokChoice; Default: 0; Choices: cFormatCaseChoices),
     (Name: 'CompilerDirectiveCase'; Group: cFormatCase; Caption: 'Compiler directive names ({$IFDEF})'; Kind: fokChoice; Default: 1; Choices: cFormatCaseChoices),
-    (Name: 'IdentifierCase'; Group: cFormatCase; Caption: 'Identifiers as declared (waits for the analysis)'; Kind: fokBoolean; Default: 0)
+    (Name: 'IdentifierCase'; Group: cFormatCase; Caption: 'Identifiers as declared (waits for the analysis)'; Kind: fokBoolean; Default: 0),
+    (Name: 'RightMargin'; Group: cFormatWrap; Caption: 'Right margin (0: none)'; Kind: fokInteger; Default: 0; MinValue: 0; MaxValue: 400),
+    (Name: 'WrapLongLines'; Group: cFormatWrap; Caption: 'Wrap a line longer than the right margin'; Kind: fokBoolean; Default: 0),
+    (Name: 'AlignAssignments'; Group: cFormatWrap; Caption: 'Align ":=" of consecutive assignments'; Kind: fokBoolean; Default: 0),
+    (Name: 'AlignDeclColons'; Group: cFormatWrap; Caption: 'Align ":" / "=" of consecutive declarations'; Kind: fokBoolean; Default: 0),
+    (Name: 'AlignTrailingComments'; Group: cFormatWrap; Caption: 'Align comments that end consecutive lines'; Kind: fokBoolean; Default: 0),
+    (Name: 'FormatDcuText'; Group: cFormatDcu; Caption: 'A .dcu''s generated source in this style (next server start)'; Kind: fokBoolean; Default: 1)
   );
 
 type

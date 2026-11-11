@@ -309,7 +309,9 @@ nothing is changed and the Build tab says to press it again.
 
 Settings > Formatting: the switch (off gives Ctrl+D back to the IDE's
 formatter) and the style, grouped as indentation, line breaks, spaces and
-capitalization, with Reset to defaults. "Identifiers as declared" spells
+capitalization, wrapping and alignment (off by default), with Reset to
+defaults. A .dcu opened from a navigation shows its generated source in the
+same style (from the next server start; a switch turns it off). "Identifiers as declared" spells
 every identifier as its declaration does; it waits for the analysis, so it
 is off by default. A change holds from the next Ctrl+D - the style rides
 along with each request, no server restart.

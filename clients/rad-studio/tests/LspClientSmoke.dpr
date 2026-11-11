@@ -714,6 +714,15 @@ begin
     'and the text is an interface-only unit named after the .dcu');
   Check(LText.Contains('TDcuThing = class') and LText.Contains('DcuLimit'),
     'declaring the type and the constant the source declared');
+  // FormatDcuText is on by default: the text went through PasFormatText in
+  // the configured style (the default here), so formatting it as a document
+  // of its own changes nothing. Under another name, off any search path.
+  SendDidOpenText(TPath.Combine(GFixtureDir, 'DcuTextFormatted.pas'), LText);
+  Check(Ask('textDocument/formatting',
+    TJSONObject.Create.AddPair('textDocument',
+      TJSONObject.Create.AddPair('uri', PathToLspUri(
+        TPath.Combine(GFixtureDir, 'DcuTextFormatted.pas'))))) and
+    (GResultJson = '[]'), 'the generated text is already in the style');
   LLines := SplitLines(LText);
   if (LTargetLine >= 0) and (LTargetLine <= High(LLines)) then
     LLineText := LLines[LTargetLine]
@@ -4964,7 +4973,8 @@ begin
     Check(LAllSame, 'with the library''s default');
     LAllKnown := LDefaults <> nil;
     for LIdx := 0 to High(cFormatOptions) do
-      if (cFormatOptions[LIdx].Name <> 'IdentifierCase') and (LDefaults <> nil)
+      if (cFormatOptions[LIdx].Name <> 'IdentifierCase') and
+         (cFormatOptions[LIdx].Name <> 'FormatDcuText') and (LDefaults <> nil)
          and (LDefaults.FindValue('defaults.' + cFormatOptions[LIdx].Name) = nil) then
       begin
         Writeln('  -- not a TPasFormatOptions field: ' + cFormatOptions[LIdx].Name);

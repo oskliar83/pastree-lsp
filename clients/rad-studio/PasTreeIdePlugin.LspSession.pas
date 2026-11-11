@@ -2868,6 +2868,7 @@ function TLspSession.BuildOptions(const AProject: IOTAProject;
   out APlatform, AConfig: string): TLspInitOptions;
 var
   LLogPath: string;
+  LFormatting: TJSONObject;
 begin
   Result := Default(TLspInitOptions);
   ActiveTarget(AProject, APlatform, AConfig);
@@ -2920,6 +2921,15 @@ begin
     Result.NoLightLibraries := not LightLibrariesEnabled;
   // What the analysis reports, so fixed per server like the parsing mode.
   Result.UndeclaredBehindMissingUnits := UndeclaredBehindMissingUnitsEnabled;
+  // The formatter's style, for the .dcu text the analysis reads (the
+  // server's DcuTextFilter). Not a restart reason: a format request carries
+  // the style itself, and the .dcu text follows at the next server start.
+  LFormatting := FormatRequestOptions(FormatOptionValues);
+  try
+    Result.Formatting := LFormatting.ToJSON;
+  finally
+    LFormatting.Free;
+  end;
   // The IDE-side timing lines (PasTreeIdePlugin.Timing) go into the same
   // file as the server's, but only with ADVANCED logging on: they are a few
   // lines per typing pause, which is the "log nobody can skim" the advanced

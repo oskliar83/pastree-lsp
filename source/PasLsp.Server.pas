@@ -365,6 +365,9 @@ type
     // tabSize, one left to the default does not (HandleFormatting).
     FFormatOptions: TPasFormatOptions;
     FFormatIdentCase: Boolean;
+    // FormatDcuText (default on): a compiled unit's generated text through
+    // PasFormatText in FFormatOptions - see DcuFilterFromConfig.
+    FFormatDcuText: Boolean;
     FFormatSet: TArray<string>;
     FFormatInsertSpacesSaid: Boolean;
     FSession: TPasAsyncSession;     // in-flight analysis, nil when idle
@@ -652,6 +655,8 @@ type
     function HandleUsesRemoval(const AMsg: TLspIncoming): string;
     function HandleOnTypeFormatting(const AMsg: TLspIncoming): string;
     procedure ApplyFormatConfig(AJson: TJSONValue; const AFrom: string);
+    function DcuFilterFromConfig: TPasTextFilter;
+    function CurrentDcuFilter: TPasTextFilter;
     procedure HandleDidChangeConfiguration(AParams: TJSONValue);
     function FormatIdentCaseEdits(const APath, AText: string;
       const AOptions: TPasFormatOptions; ARange: Boolean;
@@ -831,6 +836,7 @@ begin
   FPromoteRebuilt.Duplicates := dupIgnore;
   FLightLibraries := True;
   FFormatOptions := TPasFormatOptions.Default;
+  FFormatDcuText := True;
   FPlatform := pfWin64;
   FCompilerVersion := DEFAULT_COMPILER_VERSION;
   FTrace := GetEnvironmentVariable('PASTREE_LSP_TRACE') <> '';
@@ -1618,6 +1624,8 @@ begin
   // below inherits it.
   FSession.SetReportUnresolvedMembers(True);
   FSession.SetReportUndeclaredBehindMissingUnits(FUndeclaredBehindMissing);
+  // A .dcu's generated text in the configured style - DcuFilterFromConfig.
+  FSession.SetDcuTextFilter(DcuFilterFromConfig());
   // The "analysisThreads" 1 - see ApplyInitOptions.
   if FPoolWidth = 1 then
     FSession.SetSingleThreadedInner(True);
@@ -2902,6 +2910,7 @@ begin
     Result.SetNamespaces(FNamespaces);
     Result.ReportUnresolvedMembers := True;
     Result.ReportUndeclaredBehindMissingUnits := FUndeclaredBehindMissing;
+    Result.DcuTextFilter := DcuFilterFromConfig();
     if FPoolWidth = 1 then
       Result.SingleThreaded := True;
     if FProjectDir <> '' then
@@ -4147,7 +4156,7 @@ begin
   // rebuild is due. Every real session log showed exactly this churn:
   // full rebuilds on plain clicking around.
   try
-    LDisk := TPasSourceManager.LoadFileTolerant(LPath);
+    LDisk := TPasSourceManager.LoadFileTolerant(LPath, CurrentDcuFilter());
   except
     LDisk := '';   // unreadable/new file: treat the buffer as the truth
   end;
@@ -6592,7 +6601,7 @@ begin
       TPath.GetFileName(LPath) + ': the file does not exist'));
   end;
   try
-    LText := TPasSourceManager.LoadFileTolerant(LPath);
+    LText := TPasSourceManager.LoadFileTolerant(LPath, CurrentDcuFilter());
   except
     on E: Exception do
     begin
@@ -7434,15 +7443,51 @@ var
 begin
   FFormatOptions := TPasFormatOptions.Default;
   FFormatIdentCase := False;
+  FFormatDcuText := True;
   FFormatSet := nil;
   LProblems := nil;
-  ApplyFormatJson(FFormatOptions, FFormatIdentCase, AJson, FFormatSet,
+  ApplyFormatJson(FFormatOptions, FFormatIdentCase, FFormatDcuText, AJson, FFormatSet,
     LProblems);
   if Length(FFormatSet) > 0 then
     Log(Format('formatting: %s sets %s', [AFrom,
       string.Join(', ', FFormatSet)]));
   for LProblem in LProblems do
     Log(Format('formatting: %s - %s; ignored', [AFrom, LProblem]));
+end;
+
+{ THE .dcu TEXT FILTER (PasTree's formatter stage F7): a compiled unit's
+  generated interface text through PasFormatText in the configured style,
+  or nil with FormatDcuText off. The options are COPIED into the closure:
+  the analysis calls it on its worker threads, and a later configuration
+  must not change the text a project already read. Set on every project
+  this server builds - the full session (SetDcuTextFilter, before Start)
+  and NewConfiguredProject; CreateForModule / CreateForPromotion carry the
+  project's own - so a configuration change reaches the .dcu text at the
+  next full analysis, never in the middle of one project's models. }
+function TLspServer.DcuFilterFromConfig: TPasTextFilter;
+var
+  LOpts: TPasFormatOptions;
+begin
+  if not FFormatDcuText then
+    Exit(nil);
+  LOpts := FFormatOptions;
+  Result :=
+    function(const APath, AText: string): string
+    begin
+      Result := PasFormatText(AText, APath, LOpts);
+    end;
+end;
+
+{ The filter a .dcu text handed to the client goes through: the CURRENT
+  project's, so a tab shows the text that project's positions are in; the
+  configured one before any project exists (the first one is built with
+  it). }
+function TLspServer.CurrentDcuFilter: TPasTextFilter;
+begin
+  if FProject <> nil then
+    Result := FProject.DcuTextFilter
+  else
+    Result := DcuFilterFromConfig();
 end;
 
 { workspace/didChangeConfiguration: `settings.formatting`, or
@@ -7555,7 +7600,7 @@ var
   LPath, LText, LHow, LProblem: string;
   LDoc: TLspDocument;
   LOpts: TPasFormatOptions;
-  LIdent: Boolean;
+  LIdent, LDcuText: Boolean;
   LSet, LProblems: TArray<string>;
   LReq: TJSONValue;
   LTab, LStart, LEnd, LDiags, LSL, LSC, LEL, LEC: Integer;
@@ -7581,7 +7626,8 @@ begin
   LSet := FFormatSet;
   LProblems := nil;
   LReq := AMsg.Params.FindValue('options');
-  ApplyFormatJson(LOpts, LIdent, LReq, LSet, LProblems);
+  LDcuText := FFormatDcuText;   // a request cannot change what the analysis read
+  ApplyFormatJson(LOpts, LIdent, LDcuText, LReq, LSet, LProblems);
   for LProblem in LProblems do
     Log(Format('%s: options - %s; ignored', [AMsg.Method, LProblem]));
   if (LReq <> nil) and not NameListed(LSet, 'IndentStep') then
@@ -7664,10 +7710,11 @@ end;
 function TLspServer.HandleFormatOptions(const AMsg: TLspIncoming): string;
 begin
   Result := BuildResponse(AMsg.IdJson, Format(
-    '{"defaults":%s,"configured":%s,"identifierCase":%s}',
+    '{"defaults":%s,"configured":%s,"identifierCase":%s,"formatDcuText":%s}',
     [FormatOptionsJson(TPasFormatOptions.Default),
      FormatOptionsJson(FFormatOptions),
-     BoolToStr(FFormatIdentCase, True).ToLower]));
+     BoolToStr(FFormatIdentCase, True).ToLower,
+     BoolToStr(FFormatDcuText, True).ToLower]));
 end;
 
 { textDocument/onTypeFormatting - block completion, standard LSP: the client
@@ -9413,7 +9460,7 @@ begin
     if FDocs.TryGet(LPath, LDoc) then
     begin
       try
-        LDisk := TPasSourceManager.LoadFileTolerant(LPath);
+        LDisk := TPasSourceManager.LoadFileTolerant(LPath, CurrentDcuFilter());
       except
         LDisk := '';   // deleted or locked: the overlay is all we have
       end;

@@ -147,6 +147,13 @@ type
     /// is off; the plugin's setting is on by default.
     /// </summary>
     UndeclaredBehindMissingUnits: Boolean;
+    /// <summary>
+    /// Sent as "formatting" when not empty: the formatter's style as a JSON
+    /// object text (PasTreeIdePlugin.FormatText.FormatRequestOptions) - what
+    /// the server puts a .dcu's generated text through (FormatDcuText).
+    /// Text, not an object, so the record stays a value.
+    /// </summary>
+    Formatting: string;
     /// <summary>Caller owns the returned object.</summary>
     function ToJson: TJSONObject;
   end;
@@ -585,6 +592,7 @@ end;
 function TLspInitOptions.ToJson: TJSONObject;
 var
   LResult: TJSONObject;
+  LFormatting: TJSONValue;
 
   procedure AddStrings(const AName: string; const AValues: TArray<string>);
   var
@@ -625,6 +633,14 @@ begin
     LResult.AddPair('lightLibraries', TJSONBool.Create(False));
   if UndeclaredBehindMissingUnits then
     LResult.AddPair('undeclaredBehindMissingUnits', TJSONBool.Create(True));
+  if Formatting <> '' then
+  begin
+    LFormatting := TJSONObject.ParseJSONValue(Formatting);
+    if LFormatting is TJSONObject then
+      LResult.AddPair('formatting', LFormatting)
+    else
+      LFormatting.Free;
+  end;
   // Real JSON arrays: the server logs a warning and ignores any other shape,
   // which already cost this project a debugging round once.
   AddStrings('searchPaths', SearchPaths);
