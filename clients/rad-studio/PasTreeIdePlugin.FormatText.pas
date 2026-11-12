@@ -132,6 +132,29 @@ function FormatChoices(const ADef: TFormatOptionDef): TArray<string>;
 /// </summary>
 function FormatRequestOptions(const AValues: TFormatValues): TJSONObject;
 
+type
+  /// <summary>pastree/inferFormatOptions read for the options page.</summary>
+  TFormatInference = record
+    Ok: Boolean;
+    Error: string;
+    /// The page's values with every option the server decided replaced -
+    /// one it has no note for (TabWidth, the column-1 rows, the server's own
+    /// IdentifierCase and FormatDcuText) keeps the page's value.
+    Values: TFormatValues;
+    Changed: Integer;   // rows whose value differs from the page's
+    /// One line per decided option, for the user: its caption, the value,
+    /// what the project showed; a mixed one says it is kept as written.
+    Report: string;
+    Files, Skipped, Total, Ms: Integer;
+  end;
+
+/// <summary>
+/// The answer of pastree/inferFormatOptions over ABase (the page's values
+/// now). Ok False, ABase unchanged, for anything but that answer's shape.
+/// </summary>
+function ParseFormatInference(AResult: TJSONValue;
+  const ABase: TFormatValues): TFormatInference;
+
 /// <summary>The edits of a TextEdit[] answer; nil for anything else.</summary>
 function ParseFormatEdits(AResult: TJSONValue): TArray<TFormatEdit>;
 
@@ -215,6 +238,101 @@ begin
           Result.AddPair(LDef.Name, LChoices[LValue]);
         end;
     end;
+  end;
+end;
+
+function ParseFormatInference(AResult: TJSONValue;
+  const ABase: TFormatValues): TFormatInference;
+var
+  LOptions, LValue: TJSONValue;
+  LNotes: TJSONArray;
+  LNote: TJSONValue;
+  LName, LText, LLine: string;
+  LIdx, LChoice, LNew: Integer;
+  LChoices: TArray<string>;
+  LDef: TFormatOptionDef;
+begin
+  Result := Default(TFormatInference);
+  Result.Values := Copy(ABase);
+  if Length(Result.Values) < Length(cFormatOptions) then
+  begin
+    LIdx := Length(Result.Values);
+    SetLength(Result.Values, Length(cFormatOptions));
+    for LIdx := LIdx to High(cFormatOptions) do
+      Result.Values[LIdx] := cFormatOptions[LIdx].Default;
+  end;
+  if not (AResult is TJSONObject) then
+  begin
+    Result.Error := 'no answer';
+    Exit;
+  end;
+  LOptions := TJSONObject(AResult).GetValue('options');
+  LValue := TJSONObject(AResult).GetValue('notes');
+  if not (LOptions is TJSONObject) or not (LValue is TJSONArray) then
+  begin
+    Result.Error := 'not an answer of pastree/inferFormatOptions';
+    Exit;
+  end;
+  LNotes := TJSONArray(LValue);
+  Result.Files := AResult.GetValue<Integer>('files', 0);
+  Result.Skipped := AResult.GetValue<Integer>('skipped', 0);
+  Result.Total := AResult.GetValue<Integer>('total', 0);
+  Result.Ms := AResult.GetValue<Integer>('ms', 0);
+  for LNote in LNotes do
+  begin
+    if not (LNote is TJSONObject) then
+      Continue;
+    LName := LNote.GetValue<string>('option', '');
+    LIdx := FormatOptionIndex(LName);
+    LText := LNote.GetValue<string>('value', '') + ' - ' +
+      LNote.GetValue<string>('evidence', '');
+    if LNote.GetValue<Boolean>('mixed', False) then
+      LText := LText + ' (mixed: kept as written)';
+    if LIdx < 0 then
+    begin
+      // An option the library has and this table lacks: said, not set.
+      Result.Report := Result.Report + LName + ': ' + LText + sLineBreak;
+      Continue;
+    end;
+    LDef := cFormatOptions[LIdx];
+    Result.Report := Result.Report + LDef.Caption + ': ' + LText + sLineBreak;
+    LValue := TJSONObject(LOptions).GetValue(LDef.Name);
+    if LValue = nil then
+      Continue;
+    LNew := Result.Values[LIdx];
+    case LDef.Kind of
+      fokInteger:
+        if LValue is TJSONNumber then
+          LNew := TJSONNumber(LValue).AsInt;
+      fokBoolean:
+        if LValue is TJSONBool then
+          LNew := Ord(TJSONBool(LValue).AsBoolean);
+      fokChoice:
+        begin
+          LChoices := FormatChoices(LDef);
+          for LChoice := 0 to High(LChoices) do
+            if SameText(LChoices[LChoice], LValue.Value) then
+              LNew := LChoice;
+        end;
+    end;
+    if LNew <> Result.Values[LIdx] then
+      Inc(Result.Changed);
+    Result.Values[LIdx] := LNew;
+  end;
+  LLine := Format('%d of the project''s %d units read in %.1f s',
+    [Result.Files, Result.Total, Result.Ms / 1000]);
+  if Result.Skipped > 0 then
+    LLine := LLine + Format(', %d skipped (they do not parse clean)',
+      [Result.Skipped]);
+  Result.Report := LLine + '.' + sLineBreak + sLineBreak + Result.Report;
+  Result.Ok := Result.Files > 0;
+  if not Result.Ok then
+  begin
+    // Nothing read: every option came back as its default, which is no
+    // finding about the project.
+    Result.Error := 'no unit of the project could be read';
+    Result.Values := Copy(ABase);
+    Result.Changed := 0;
   end;
 end;
 

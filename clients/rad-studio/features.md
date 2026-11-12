@@ -316,6 +316,13 @@ every identifier as its declaration does; it waits for the analysis, so it
 is off by default. A change holds from the next Ctrl+D - the style rides
 along with each request, no server restart.
 
+Derive from project (next to Reset to defaults) sets the page to the style
+the active project's own units are written in - library units aside - and
+shows what each option was decided from: "begin on its own line - agrees at
+99.8% of 39,002 sites". An option the project writes both ways (under 90%
+one way) is set to keep the text as written and the report says so. A large
+project is sampled for about ten seconds. Nothing is saved until OK.
+
 ## Diagnostics and feedback
 
 ### Type names in their own colour

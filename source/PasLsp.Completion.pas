@@ -235,6 +235,12 @@ type
       const AOptions: TPasFormatOptions; ARange: Boolean;
       AStart, AEnd: Integer; out AEdits: TPasTextEdits;
       out ADiags: Integer): Boolean;
+    { Style inference: AText (file AFileName) preprocessed and parsed as
+      FormatEdits does, and what it shows about its style added to ASample
+      (PasTree's PasFormatTally). False - nothing added - for a text that
+      does not parse clean: a recovered tree's layout is no one's style. }
+    function TallyFormat(const AFileName, AText: string;
+      var ASample: TPasFormatSample): Boolean;
     (* Argument annotation for the call at the caret - `{Name:}` and
       `{var}`/`{out}` in front of the arguments (PasLsp.AnnotateArgs has the
       rules). The signature-help pipeline exactly: the LIVE text, resolved
@@ -2245,6 +2251,23 @@ begin
     AEdits := PasFormatRangeEdits(LTree, 0, AOptions, AStart, AEnd)
   else
     AEdits := PasFormatEdits(LTree, 0, AOptions);
+  Result := True;
+end;
+
+function TLspCompletionEngine.TallyFormat(const AFileName, AText: string;
+  var ASample: TPasFormatSample): Boolean;
+var
+  LPre: TPasPreprocessed;
+  LTree: TPasTree;
+  LDiags: TArray<TPasParseDiag>;
+begin
+  LPre := FPreprocessor.ProcessText(AFileName, AText);
+  if (Length(LPre.Files) = 0) or (LPre.Files[0].Source <> AText) then
+    Exit(False);
+  LTree := TPasParser.ParseFile(LPre, LDiags);
+  if (Length(LDiags) > 0) or (Length(LPre.Diagnostics) > 0) then
+    Exit(False);
+  PasFormatTally(LTree, 0, ASample);
   Result := True;
 end;
 
