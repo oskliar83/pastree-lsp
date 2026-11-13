@@ -80,8 +80,8 @@ costs, and the incremental-reanalysis mechanism are in
   decl-impl toggle,
   rename (form files included - through the form designer when the form is
   loaded), class completion (Ctrl+Shift+C: missing bodies and property
-  accessors), prototype sync, block completion, and Format (Ctrl+D, the
-  PasTree formatter; Format Selection with a selection - its style on the
+  accessors), prototype sync, block completion, and Format (the PasTree
+  formatter: Ctrl+D the line or the selection, Ctrl+Alt+D the unit - its style on the
   Settings dialog's Formatting tab) - each with its own on/off switch in
   Tools > PasTree > Settings.
 

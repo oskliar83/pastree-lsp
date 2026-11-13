@@ -1,19 +1,25 @@
 unit PasTreeIdePlugin.Format;
 
 {
-  Format (Ctrl+D): the PasTree formatter over the active editor's buffer,
-  through the server's textDocument/formatting (no selection) or
-  textDocument/rangeFormatting (a selection) - the same split the IDE's own
-  Ctrl+D makes, which is why this takes that key rather than a new one.
+  Format: the PasTree formatter over the active editor's buffer. Ctrl+D is
+  the caret's line, or the selected lines, through the server's
+  textDocument/rangeFormatting; Ctrl+Alt+D is the whole unit, through
+  textDocument/formatting, after a confirmation.
 
-  CTRL+D, BEHIND A SWITCH. The key is registered unconditionally (the one
-  binding, PasTreeIdePlugin.KeyBindings) and answers krUnhandled when
-  Settings > Editing "Format (Ctrl+D)" is off, so the IDE's own formatter is
-  back on the next keystroke with nothing to unbind. On by default, like
-  every IDE key this package takes over. No second key for Format Selection:
-  Ctrl+Shift+D is the IDE's Declare Field, and a selection already says
-  which one is meant. A file that is not Pascal source (a .dfm as text, a
-  .dproj) is handed back to the IDE too.
+  WHY NOT THE IDE'S SPLIT (Ctrl+D = the unit without a selection). Decided
+  by Alex (0.88.2): Ctrl+D is pressed while writing, on the line just
+  typed, and re-laying the whole unit there moves lines the author did not
+  touch - in a unit written in another style, every one of them. The unit
+  is a deliberate act, so it gets its own key and a question. Its key is
+  Ctrl+Alt+D, not Ctrl+Shift+D: that one is the IDE's Declare Field, which
+  Alex keeps.
+
+  BOTH KEYS BEHIND ONE SWITCH. They are registered unconditionally (the one
+  binding, PasTreeIdePlugin.KeyBindings) and answer krUnhandled when
+  Settings > Formatting "Format" is off, so the IDE's own Ctrl+D is back on
+  the next keystroke with nothing to unbind. On by default, like every IDE
+  key this package takes over. A file that is not Pascal source (a .dfm as
+  text, a .dproj) is handed back to the IDE too.
 
   ONE UNDO STEP: every edit through one IOTAEditWriter
   (CreateUndoableWriter), ascending, offsets resolved before the writer opens
@@ -39,13 +45,15 @@ unit PasTreeIdePlugin.Format;
 interface
 
 uses
+  System.Classes,
   ToolsAPI;
 
 /// <summary>
-/// Formats AView's buffer - the selection's lines when a block is selected,
-/// else the whole file.
+/// Formats AView's buffer: the whole unit when AWholeUnit (after asking),
+/// else the selection's lines when a block is selected, else the caret's
+/// line.
 /// </summary>
-procedure FormatView(const AView: IOTAEditView);
+procedure FormatView(const AView: IOTAEditView; AWholeUnit: Boolean);
 
 /// <summary>For the editor menu's OnUpdate: is there a Pascal buffer to
 /// format, and is it a selection?</summary>
@@ -54,12 +62,18 @@ function CanFormatView(const AView: IOTAEditView; out ASelection: Boolean): Bool
 procedure InitializeFormat;
 procedure FinalizeFormat;
 
+/// <summary>Ctrl+D: the line or the selection; Ctrl+Alt+D: the unit. The
+/// menu's labels read these too.</summary>
+function FormatLineKey: TShortCut;
+function FormatUnitKey: TShortCut;
+
 implementation
 
 uses
   System.SysUtils,
-  System.Classes,
+  System.UITypes,
   Vcl.Menus,
+  Vcl.Dialogs,
   PasTreeIdePlugin.FormatText,
   PasTreeIdePlugin.KeyBindings,
   PasTreeIdePlugin.LspDocuments,
@@ -140,7 +154,7 @@ begin
   AView.Paint;
 end;
 
-procedure FormatView(const AView: IOTAEditView);
+procedure FormatView(const AView: IOTAEditView; AWholeUnit: Boolean);
 var
   LModule: IOTAModule;
   LFileName: string;
@@ -148,6 +162,7 @@ var
   LSelection: Boolean;
   LBlock: IOTAEditBlock;
   LStartRow, LStartCol, LEndRow, LEndCol: Integer;
+  LWhat, LKey: string;
 begin
   if not CanFormatView(AView, LSelection) then
     Exit;
@@ -155,12 +170,34 @@ begin
   if not Assigned(LModule) then
     Exit;
   LFileName := AView.Buffer.FileName;
+  if AWholeUnit and (MessageDlg(Format('Format the whole of %s?',
+       [ExtractFileName(LFileName)]) + sLineBreak + sLineBreak
+       + 'Every line of the unit is laid out in the PasTree style; one '
+       + 'Ctrl+Z undoes it.', mtConfirmation, [mbYes, mbNo], 0, mbYes)
+       <> mrYes) then
+    Exit;
+  // Read after the question: the buffer the answer is checked against.
   LSnapshot := ReadModuleBufferUtf8(LModule);
   LStartRow := 0;
   LStartCol := 0;
   LEndRow := 0;
   LEndCol := 0;
-  if LSelection then
+  if AWholeUnit then
+  begin
+    LWhat := ExtractFileName(LFileName);
+    LKey := 'Ctrl+Alt+D';
+  end
+  else if not LSelection then
+  begin
+    // The caret's line, whole - its indentation included.
+    LStartRow := AView.CursorPos.Line;
+    LStartCol := 1;
+    LEndRow := LStartRow;
+    LEndCol := MaxInt div 2;   // the server clamps to the line's end
+    LWhat := Format('%s, line %d', [ExtractFileName(LFileName), LStartRow]);
+    LKey := 'Ctrl+D';
+  end
+  else
   begin
     // Whole lines: from the first selected line's start to the end of the
     // last one - a selection ending at column 1 does not select that line.
@@ -171,8 +208,11 @@ begin
     if (LEndRow > LStartRow) and (LBlock.EndingColumn <= 1) then
       Dec(LEndRow);
     LEndCol := MaxInt div 2;   // the server clamps to the line's end
+    LWhat := Format('%s, lines %d-%d',
+      [ExtractFileName(LFileName), LStartRow, LEndRow]);
+    LKey := 'Ctrl+D';
   end;
-  LspFormat(LFileName, LSelection, LStartRow, LStartCol, LEndRow, LEndCol,
+  LspFormat(LFileName, not AWholeUnit, LStartRow, LStartCol, LEndRow, LEndCol,
     FormatOptionValues,
     procedure(ASuccess: Boolean; const AEdits: TArray<TFormatEdit>;
       const AError: string)
@@ -190,14 +230,14 @@ begin
       end;
       if Length(AEdits) = 0 then
       begin
-        LogDiagnostic(ExtractFileName(LFileName) + ': already formatted');
+        LogDiagnostic(LWhat + ': already formatted');
         Exit;
       end;
       LNow := ReadModuleBufferUtf8(LModule);
       if LNow <> LSnapshot then
       begin
         LogDiagnostic('Format: the buffer changed while the server was '
-          + 'answering - nothing was changed. Press Ctrl+D again.');
+          + 'answering - nothing was changed. Press ' + LKey + ' again.');
         Exit;
       end;
       if not FormatByteEdits(LNow, AEdits, LByteEdits, LWhy) then
@@ -213,13 +253,14 @@ begin
     end);
 end;
 
+{ Ctrl+D and Ctrl+Alt+D, told apart by AKeyCode. }
 procedure FormatKeyProc(const AContext: IOTAKeyContext; AKeyCode: TShortCut;
   var ABindingResult: TKeyBindingResult);
 var
   LView: IOTAEditView;
   LSelection: Boolean;
 begin
-  // Off, or not a Pascal buffer: the IDE's own Ctrl+D.
+  // Off, or not a Pascal buffer: the IDE's own key.
   ABindingResult := krUnhandled;
   if not GAlive or not FormatEnabled or not Assigned(AContext) or
      not Assigned(AContext.EditBuffer) then
@@ -228,13 +269,24 @@ begin
   if not CanFormatView(LView, LSelection) then
     Exit;
   ABindingResult := krHandled;
-  FormatView(LView);
+  FormatView(LView, AKeyCode = FormatUnitKey);
 end;
 
 procedure InitializeFormat;
 begin
   GAlive := True;
-  RegisterKey(ShortCut(Ord('D'), [ssCtrl]), FormatKeyProc);
+  RegisterKey(FormatLineKey, FormatKeyProc);
+  RegisterKey(FormatUnitKey, FormatKeyProc);
+end;
+
+function FormatLineKey: TShortCut;
+begin
+  Result := ShortCut(Ord('D'), [ssCtrl]);
+end;
+
+function FormatUnitKey: TShortCut;
+begin
+  Result := ShortCut(Ord('D'), [ssCtrl, ssAlt]);
 end;
 
 procedure FinalizeFormat;

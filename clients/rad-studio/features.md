@@ -293,13 +293,15 @@ if you keep typing while it is in flight, and Enter itself is never swallowed -
 if the IDE's own block completion is enabled in Editor Options, both would
 insert, and this is the one with an off switch.
 
-### Format (Ctrl+D)
+### Format (Ctrl+D, Ctrl+Alt+D)
 
-Ctrl+D lays out the active unit with the PasTree formatter - indentation, line
+Ctrl+D lays out the caret's line with the PasTree formatter - indentation, line
 breaks, spacing inside a line and the case of reserved words, directives and
-compiler directive names. With a selection it formats the selected lines only
-(Format Selection), the way the IDE's own Ctrl+D does; the editor menu has the
-same item, captioned by the selection. Only whitespace between tokens changes:
+compiler directive names; with a selection, the selected lines (Format
+Selection). Ctrl+Alt+D formats the whole unit, after asking (Format Unit...).
+Unlike the IDE's own Ctrl+D, a key pressed while writing never re-lays lines
+nobody touched. The editor menu has both items, the first captioned by the
+selection. Only whitespace between tokens changes:
 comments, directives, inactive `{$IFDEF}` branches and strings are untouched,
 and a statement the parser could not read (the one being typed) is left as
 written. The whole format is one undoable step, the caret stays on its token
@@ -308,7 +310,7 @@ as it is on screen, not the file; if you type while the server answers,
 nothing is changed and the Build tab says to press it again.
 
 Settings > Formatting: the switch (off gives Ctrl+D back to the IDE's
-formatter) and the style, grouped as indentation, line breaks, spaces and
+formatter, and Ctrl+Alt+D to whatever the IDE has on it) and the style, grouped as indentation, line breaks, spaces and
 capitalization, wrapping and alignment (off by default), with Reset to
 defaults. Right margin 0 (the default) is the IDE's own Right margin from
 Editor Options > Display, read at each Ctrl+D; a number overrides it. A .dcu opened from a navigation shows its generated source in the

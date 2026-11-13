@@ -542,11 +542,15 @@ begin
   LTab := TTabSheet.Create(Self);
   LTab.PageControl := pgcSettings;
   LTab.Caption := 'Formatting';
+  // Where Diagnostics stood in the .dfm, and Diagnostics last (Alex,
+  // 0.88.3): the style is set far more often than what Diagnostics holds.
+  LTab.PageIndex := tsDiagnostics.PageIndex;
+  tsDiagnostics.PageIndex := pgcSettings.PageCount - 1;
 
   FFormatSwitch := TCheckBox.Create(Self);
   FFormatSwitch.Parent := LTab;
   FFormatSwitch.SetBounds(S(16), S(12), S(430), S(17));
-  FFormatSwitch.Caption := 'Format (Ctrl+D; Format Selection with a selection)';
+  FFormatSwitch.Caption := 'Format (Ctrl+D: the line or the selection; Ctrl+Alt+D: the unit)';
   FFormatSwitch.OnClick := FormatSwitchClick;
   LLabel := TLabel.Create(Self);
   LLabel.Parent := LTab;
@@ -555,7 +559,7 @@ begin
   LLabel.SetBounds(S(34), S(32), S(420), S(30));
   LLabel.Caption := 'The PasTree formatter instead of the IDE''s: indentation, '
     + 'line breaks, spacing and case; comments and directives untouched. '
-    + 'Off: Ctrl+D is the IDE''s own formatter.';
+    + 'Off: Ctrl+D is the IDE''s own formatter again.';
 
   LButton := TButton.Create(Self);
   LButton.Parent := LTab;

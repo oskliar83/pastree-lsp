@@ -169,6 +169,8 @@ type
     procedure OnRenameUpdate(Sender: TObject);
     procedure OnFormatExecute(Sender: TObject);
     procedure OnFormatUpdate(Sender: TObject);
+    procedure OnFormatUnitExecute(Sender: TObject);
+    procedure OnFormatUnitUpdate(Sender: TObject);
     procedure OnAnnotateArgsExecute(Sender: TObject);
     procedure OnAnnotateArgsUpdate(Sender: TObject);
     procedure OnFindTypeDeclarationExecute(Sender: TObject);
@@ -285,16 +287,26 @@ begin
   LAction.Enabled := True;
   LAction.ActionList := FActionList;
 
-  // Format / Format Selection (PasTreeIdePlugin.Format): one item whose
-  // caption follows the selection, as Ctrl+D itself does. A LABEL, NOT A
-  // BINDING - Rename's note above.
+  // Format Line / Format Selection (PasTreeIdePlugin.Format): one item whose
+  // caption follows the selection, as Ctrl+D itself does; Format Unit...
+  // (Ctrl+Alt+D) asks first. LABELS, NOT BINDINGS - Rename's note above.
   LAction := TAction.Create(FActionList);
   LAction.Name := 'PasTreeFormat';
-  LAction.Caption := 'Format';
+  LAction.Caption := 'Format Line';
   LAction.Category := 'PasTreeFormat';
-  LAction.ShortCut := ShortCut(Ord('D'), [ssCtrl]);
+  LAction.ShortCut := FormatLineKey;
   LAction.OnUpdate := OnFormatUpdate;
   LAction.OnExecute := OnFormatExecute;
+  LAction.Enabled := True;
+  LAction.ActionList := FActionList;
+
+  LAction := TAction.Create(FActionList);
+  LAction.Name := 'PasTreeFormatUnit';
+  LAction.Caption := 'Format Unit...';
+  LAction.Category := 'PasTreeFormatUnit';
+  LAction.ShortCut := FormatUnitKey;
+  LAction.OnUpdate := OnFormatUnitUpdate;
+  LAction.OnExecute := OnFormatUnitExecute;
   LAction.Enabled := True;
   LAction.ActionList := FActionList;
 
@@ -749,12 +761,25 @@ begin
   if LSelection then
     TAction(Sender).Caption := 'Format Selection'
   else
-    TAction(Sender).Caption := 'Format';
+    TAction(Sender).Caption := 'Format Line';
 end;
 
 procedure TMenuManager.OnFormatExecute(Sender: TObject);
 begin
-  FormatView(FEditorServices.TopView);
+  FormatView(FEditorServices.TopView, False);
+end;
+
+procedure TMenuManager.OnFormatUnitUpdate(Sender: TObject);
+var
+  LSelection: Boolean;
+begin
+  TAction(Sender).Visible := FormatEnabled;
+  TAction(Sender).Enabled := CanFormatView(FEditorServices.TopView, LSelection);
+end;
+
+procedure TMenuManager.OnFormatUnitExecute(Sender: TObject);
+begin
+  FormatView(FEditorServices.TopView, True);
 end;
 
 procedure TMenuManager.OnAnnotateArgsUpdate(Sender: TObject);
