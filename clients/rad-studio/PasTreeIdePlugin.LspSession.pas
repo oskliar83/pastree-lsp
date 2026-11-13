@@ -2854,6 +2854,29 @@ begin
     LogDiagnostic(LMsg);
 end;
 
+{ The IDE's Right Margin (Editor Options > Display) for the formatter's
+  RightMargin 0 (PasTreeIdePlugin.FormatText, the header): the options of
+  AFileName's own option set, the Delphi set when AFileName is '' (the
+  .dcu text at the server's start, no file in view). 80, the IDE's own
+  default, when the options cannot be read - not 0, which the server reads
+  as no margin and wrapping would silently do nothing. }
+function IdeRightMargin(const AFileName: string): Integer;
+var
+  LEditorServices: IOTAEditorServices;
+  LOptions: IOTAEditOptions;
+begin
+  Result := 80;
+  if not Supports(BorlandIDEServices, IOTAEditorServices, LEditorServices) then
+    Exit;
+  if AFileName <> '' then
+    LOptions := LEditorServices.GetEditOptionsForFile(AFileName)
+  else
+    LOptions := LEditorServices.GetEditOptions(cDefEdPascal);
+  if Assigned(LOptions) and Assigned(LOptions.BufferOptions) and
+     (LOptions.BufferOptions.RightMargin > 0) then
+    Result := LOptions.BufferOptions.RightMargin;
+end;
+
 { The platform and configuration a server for AProject is started for - what
   BuildOptions sends and what the configuration switch watch compares, read
   in this one place so the two can never mean different things. }
@@ -2924,7 +2947,7 @@ begin
   // The formatter's style, for the .dcu text the analysis reads (the
   // server's DcuTextFilter). Not a restart reason: a format request carries
   // the style itself, and the .dcu text follows at the next server start.
-  LFormatting := FormatRequestOptions(FormatOptionValues);
+  LFormatting := FormatRequestOptions(FormatOptionValues, IdeRightMargin(''));
   try
     Result.Formatting := LFormatting.ToJSON;
   finally
@@ -3768,7 +3791,8 @@ begin
   LDoc.AddPair('uri', PathToLspUri(AFileName));
   LParams := TJSONObject.Create;
   LParams.AddPair('textDocument', LDoc);
-  LParams.AddPair('options', FormatRequestOptions(AValues));
+  LParams.AddPair('options',
+    FormatRequestOptions(AValues, IdeRightMargin(AFileName)));
   LMethod := 'textDocument/formatting';
   if ARange then
   begin

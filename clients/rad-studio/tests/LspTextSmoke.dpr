@@ -520,6 +520,30 @@ begin
   Check(LText.Contains('"tabSize":4') and LText.Contains('"IndentStep":4')
     and LText.Contains('"ReservedWordCase":"Upper"'),
     'a changed step and a changed case are sent');
+  // RightMargin 0 is the IDE's margin; a number in the row overrides it.
+  LJson := FormatRequestOptions(DefaultFormatValues, 100);
+  try
+    LText := LJson.ToJSON;
+  finally
+    LJson.Free;
+  end;
+  Check(LText.Contains('"RightMargin":100'), 'RightMargin 0 sends the IDE''s margin');
+  LValues := DefaultFormatValues;
+  LValues[FormatOptionIndex('RightMargin')] := 132;
+  LJson := FormatRequestOptions(LValues, 100);
+  try
+    LText := LJson.ToJSON;
+  finally
+    LJson.Free;
+  end;
+  Check(LText.Contains('"RightMargin":132'), 'a RightMargin of its own overrides the IDE''s');
+  LJson := FormatRequestOptions(DefaultFormatValues);
+  try
+    LText := LJson.ToJSON;
+  finally
+    LJson.Free;
+  end;
+  Check(LText.Contains('"RightMargin":0'), 'no IDE margin given: 0, the library''s');
 
   // BOM + `S := 'Zh';  Y := 1;` CRLF `    Z;` - Zh is one UTF-16 unit and
   // two UTF-8 bytes, so the first edit's character 9 is byte 3 + 10.

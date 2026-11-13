@@ -22,6 +22,14 @@ unit PasTreeIdePlugin.FormatText;
   of its name in Choices - so the settings store and the page need no case
   per kind beyond the control they draw.
 
+  RIGHTMARGIN 0 IS THE IDE'S RIGHT MARGIN (Editor Options > Display), not
+  "no margin" as in TPasFormatOptions: the margin a Delphi author already
+  set is the one wrapping should keep, and the library's 0 made Wrap long
+  lines a switch that did nothing until a second field was filled in.
+  FormatRequestOptions takes the IDE's value from its caller (this unit is
+  IDE-free) and sends it in place of a 0; a number in the row overrides it.
+  The row's default stays 0, the library's, so the table check holds.
+
   THE EDITS. The server answers LSP positions - 0-based line, UTF-16
   character - over the text it was sent, which is the buffer without a
   leading BOM. An IOTAEditWriter addresses the buffer's UTF-8 BYTES, BOM
@@ -92,7 +100,7 @@ const
     (Name: 'DirectiveWordCase'; Group: cFormatCase; Caption: 'Directives (override, read, ...)'; Kind: fokChoice; Default: 0; Choices: cFormatCaseChoices),
     (Name: 'CompilerDirectiveCase'; Group: cFormatCase; Caption: 'Compiler directive names ({$IFDEF})'; Kind: fokChoice; Default: 1; Choices: cFormatCaseChoices),
     (Name: 'IdentifierCase'; Group: cFormatCase; Caption: 'Identifiers as declared (waits for the analysis)'; Kind: fokBoolean; Default: 0),
-    (Name: 'RightMargin'; Group: cFormatWrap; Caption: 'Right margin (0: none)'; Kind: fokInteger; Default: 0; MinValue: 0; MaxValue: 400),
+    (Name: 'RightMargin'; Group: cFormatWrap; Caption: 'Right margin (0: the IDE''s Right margin)'; Kind: fokInteger; Default: 0; MinValue: 0; MaxValue: 400),
     (Name: 'WrapLongLines'; Group: cFormatWrap; Caption: 'Wrap a line longer than the right margin'; Kind: fokBoolean; Default: 0),
     (Name: 'AlignAssignments'; Group: cFormatWrap; Caption: 'Align ":=" of consecutive assignments'; Kind: fokBoolean; Default: 0),
     (Name: 'AlignDeclColons'; Group: cFormatWrap; Caption: 'Align ":" / "=" of consecutive declarations'; Kind: fokBoolean; Default: 0),
@@ -128,9 +136,12 @@ function FormatChoices(const ADef: TFormatOptionDef): TArray<string>;
 /// <summary>
 /// AValues as FormattingOptions members: tabSize (the indent step),
 /// insertSpaces, and every row by its name in the server's shape - a number,
-/// true / false, a choice's name. Caller owns the object.
+/// true / false, a choice's name. A RightMargin of 0 is sent as
+/// AIdeRightMargin when that is above 0 (see the header). Caller owns the
+/// object.
 /// </summary>
-function FormatRequestOptions(const AValues: TFormatValues): TJSONObject;
+function FormatRequestOptions(const AValues: TFormatValues;
+  AIdeRightMargin: Integer = 0): TJSONObject;
 
 /// <summary>The edits of a TextEdit[] answer; nil for anything else.</summary>
 function ParseFormatEdits(AResult: TJSONValue): TArray<TFormatEdit>;
@@ -182,7 +193,8 @@ begin
   Result := ADef.Choices.Split([',']);
 end;
 
-function FormatRequestOptions(const AValues: TFormatValues): TJSONObject;
+function FormatRequestOptions(const AValues: TFormatValues;
+  AIdeRightMargin: Integer): TJSONObject;
 var
   LIdx, LValue: Integer;
   LChoices: TArray<string>;
@@ -204,7 +216,12 @@ begin
       LValue := LDef.Default;
     case LDef.Kind of
       fokInteger:
-        Result.AddPair(LDef.Name, TJSONNumber.Create(LValue));
+        begin
+          if (LValue = 0) and (AIdeRightMargin > 0) and
+             SameText(LDef.Name, 'RightMargin') then
+            LValue := AIdeRightMargin;
+          Result.AddPair(LDef.Name, TJSONNumber.Create(LValue));
+        end;
       fokBoolean:
         Result.AddPair(LDef.Name, TJSONBool.Create(LValue <> 0));
       fokChoice:
