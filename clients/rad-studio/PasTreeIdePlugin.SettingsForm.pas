@@ -176,6 +176,10 @@ type
     // The Formatting tab, built in code from cFormatOptions (BuildFormatTab).
     FFormatSwitch: TCheckBox;
     FFormatControls: TArray<TControl>;
+    FFormatDerive: TButton;
+    FFormatStatus: TLabel;
+    procedure FormatDeriveClick(Sender: TObject);
+    procedure FormatDerived(const AResult: TFormatInference);
     function TypeStyles: TFontStyles;
     procedure FillThreads(ACurrent: Integer);
     function SelectedThreads: Integer;
@@ -183,6 +187,7 @@ type
     procedure FormatDefaultsClick(Sender: TObject);
     procedure FormatSwitchClick(Sender: TObject);
   public
+    destructor Destroy; override;
     procedure BuildFormatTab;
     procedure ShowFormatValues(const AValues: TFormatValues);
     function FormatValues: TFormatValues;
@@ -217,6 +222,7 @@ uses
   Winapi.ShellAPI,
   Vcl.Graphics,
   Vcl.Themes,
+  Vcl.Dialogs,
   ToolsAPI,
   PasLsp.ProductVersion,
   PasTreeIdePlugin.LspSession,
@@ -557,6 +563,22 @@ begin
   LButton.Caption := 'Reset to defaults';
   LButton.OnClick := FormatDefaultsClick;
 
+  FFormatDerive := TButton.Create(Self);
+  FFormatDerive.Parent := LTab;
+  FFormatDerive.SetBounds(S(144), S(66), S(140), S(25));
+  FFormatDerive.Caption := 'Derive from project';
+  FFormatDerive.Hint := 'Set every option to the style the active project''s '
+    + 'own units are written in (library units aside); nothing is saved '
+    + 'until OK.';
+  FFormatDerive.ShowHint := True;
+  FFormatDerive.OnClick := FormatDeriveClick;
+  FFormatStatus := TLabel.Create(Self);
+  FFormatStatus.Parent := LTab;
+  FFormatStatus.AutoSize := False;
+  FFormatStatus.EllipsisPosition := epEndEllipsis;
+  FFormatStatus.SetBounds(S(292), S(71), S(168), S(15));
+  FFormatStatus.Caption := '';
+
   LScroll := TScrollBox.Create(Self);
   LScroll.Parent := LTab;
   LScroll.BorderStyle := bsNone;
@@ -676,6 +698,64 @@ end;
 procedure TPasTreeSettingsForm.FormatDefaultsClick(Sender: TObject);
 begin
   ShowFormatValues(DefaultFormatValues);
+end;
+
+var
+  // The dialog waiting for pastree/inferFormatOptions, nil when none: the
+  // answer can come after the dialog closed (the server samples for up to
+  // ten seconds), and a form freed by then must not be touched.
+  GDeriveForm: TPasTreeSettingsForm = nil;
+
+destructor TPasTreeSettingsForm.Destroy;
+begin
+  if GDeriveForm = Self then
+    GDeriveForm := nil;
+  inherited;
+end;
+
+{ Derive from project: the server reads the active project's own units and
+  answers the options they are written in (pastree/inferFormatOptions,
+  PasTree's PasInferFormatOptions); they replace the page's values, and a
+  report says what each was decided from. Saved only by OK, like any other
+  change on the page. }
+procedure TPasTreeSettingsForm.FormatDeriveClick(Sender: TObject);
+var
+  LForm: TPasTreeSettingsForm;
+begin
+  LForm := Self;
+  GDeriveForm := Self;
+  FFormatDerive.Enabled := False;
+  FFormatStatus.Caption := 'Reading the project''s units...';
+  if not LspInferFormatOptions(FormatValues,
+    procedure(const AResult: TFormatInference)
+    begin
+      if GDeriveForm = LForm then
+      begin
+        GDeriveForm := nil;
+        LForm.FormatDerived(AResult);
+      end;
+    end) then
+  begin
+    GDeriveForm := nil;
+    FFormatDerive.Enabled := True;
+    FFormatStatus.Caption := 'No project - open one first.';
+  end;
+end;
+
+procedure TPasTreeSettingsForm.FormatDerived(const AResult: TFormatInference);
+begin
+  FFormatDerive.Enabled := True;
+  if not AResult.Ok then
+  begin
+    FFormatStatus.Caption := 'Failed: ' + AResult.Error;
+    Exit;
+  end;
+  ShowFormatValues(AResult.Values);
+  FFormatStatus.Caption := Format('%d option(s) changed', [AResult.Changed]);
+  MessageDlg('The project''s style' + sLineBreak + sLineBreak +
+    AResult.Report + sLineBreak +
+    'The page now shows these values; OK saves them, Cancel keeps the old.',
+    mtInformation, [mbOK], 0);
 end;
 
 { The style means nothing while Ctrl+D is the IDE's formatter - greyed for

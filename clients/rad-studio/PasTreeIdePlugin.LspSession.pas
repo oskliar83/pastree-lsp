@@ -1454,6 +1454,20 @@ function LspBenchmarkStatus(out AText: string; out ARunningMs: UInt64): Boolean;
 /// </summary>
 procedure LspEndBenchmark;
 
+type
+  TLspInferFormatProc = reference to procedure(const AResult: TFormatInference);
+
+/// <summary>
+/// The Formatting page's Derive from project: pastree/inferFormatOptions on
+/// the ACTIVE project's server - the style its own units are written in -
+/// read over ABase, the page's values now (ParseFormatInference). AOnDone
+/// fires once, on the main thread, also on failure (Ok False, Error says
+/// why); the caller checks it still wants the answer. False, nothing sent,
+/// when there is no active project or no server.
+/// </summary>
+function LspInferFormatOptions(const ABase: TFormatValues;
+  const AOnDone: TLspInferFormatProc): Boolean;
+
 /// <summary>"Auto" for 0, else "N threads" - the restart line's wording.</summary>
 function ThreadsText(AThreads: Integer): string;
 
@@ -1770,6 +1784,8 @@ type
     function Benchmark(AThreads: Integer; ALight: Boolean;
       const AOnDone: TLspBenchmarkProc): Boolean;
     procedure EndBenchmark;
+    function InferFormatOptions(const ABase: TFormatValues;
+      const AOnDone: TLspInferFormatProc): Boolean;
     procedure RenameTarget(const AFileName: string; ARow, ACol: Integer;
       const AOnDone: TLspRenameTargetProc);
     procedure WorkspaceSymbols(const AQuery: string;
@@ -4549,6 +4565,37 @@ begin
   Result := True;
 end;
 
+{ pastree/inferFormatOptions. The live buffers go first (FDocs.Sync), so a
+  unit open and edited is read as it stands; the server samples a large
+  project within its own time budget. }
+function TLspSession.InferFormatOptions(const ABase: TFormatValues;
+  const AOnDone: TLspInferFormatProc): Boolean;
+var
+  LBase: TFormatValues;
+begin
+  if not EnsureSession then
+    Exit(False);
+  FDocs.Sync;
+  LBase := Copy(ABase);
+  FClient.Request('pastree/inferFormatOptions', TJSONObject.Create,
+    procedure(ASuccess: Boolean; AResult: TJSONValue; const AError: string)
+    var
+      LResult: TFormatInference;
+    begin
+      if FDestroying then
+        Exit;
+      if ASuccess then
+        LResult := ParseFormatInference(AResult, LBase)
+      else
+      begin
+        LResult := ParseFormatInference(nil, LBase);
+        LResult.Error := AError;
+      end;
+      AOnDone(LResult);
+    end);
+  Result := True;
+end;
+
 procedure TLspSession.EndBenchmark;
 begin
   FBenchmarkDone := nil;
@@ -6740,6 +6787,19 @@ begin
       begin
         ASession.EndBenchmark;
       end);
+end;
+
+function LspInferFormatOptions(const ABase: TFormatValues;
+  const AOnDone: TLspInferFormatProc): Boolean;
+var
+  LSession: TLspSession;
+begin
+  Result := False;
+  if not Assigned(GPool) then
+    Exit;
+  LSession := GPool.Activate;
+  if Assigned(LSession) then
+    Result := LSession.InferFormatOptions(ABase, AOnDone);
 end;
 
 function LspFindAllAt(const AFileName: string; ARow, ACol: Integer;

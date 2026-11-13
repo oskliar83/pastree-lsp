@@ -664,6 +664,7 @@ type
     function HandleFormatting(const AMsg: TLspIncoming;
       ARange: Boolean): string;
     function HandleFormatOptions(const AMsg: TLspIncoming): string;
+    function HandleInferFormatOptions(const AMsg: TLspIncoming): string;
     function HandlePrepareRename(const AMsg: TLspIncoming): string;
     function HandleRename(const AMsg: TLspIncoming): string;
     function HandleRenamePlan(const AMsg: TLspIncoming): string;
@@ -7717,6 +7718,171 @@ begin
      BoolToStr(FFormatDcuText, True).ToLower]));
 end;
 
+(* pastree/inferFormatOptions - OURS: the style the project's own units are
+  written in (PasTree's PasFormatTally / PasInferFormatOptions, stage F9),
+  for a client's "derive from project" button. The project's units are the
+  main source and the .dproj's list - never a library unit, whose style is
+  its vendor's; with no list, the models under the project's directory, as
+  pastree/units has them (that waits for the analysis). Each is read live
+  (the buffer if open) and parsed as textDocument/formatting parses it; one
+  that does not parse clean counts nothing.
+
+  A LARGE PROJECT IS SAMPLED, NOT READ WHOLE. A file costs about a tenth of
+  a second (the tally formats it seven times), and the server answers
+  nothing else meanwhile. So the files are visited in a stride order that
+  spreads any prefix of it over the whole list, until `maxFiles` (300) are
+  counted or `budgetMs` (10000) has passed; the answer says how many were.
+  $/cancelRequest is honoured between files.
+
+  Params (all optional): {"maxFiles": n, "budgetMs": n}.
+  Answer: {"options": {field: value, ...} - as pastree/formatOptions spells
+  them, "notes": [{"option", "value", "evidence", "mixed"}], "files": counted,
+  "skipped": not parsed clean, "total": the project's units, "lines": n,
+  "ms": n}. Nothing is configured: the client shows it and decides. *)
+function TLspServer.HandleInferFormatOptions(const AMsg: TLspIncoming): string;
+var
+  LFiles: TList<string>;
+  LSeen: TDictionary<string, Boolean>;
+  LSample: TPasFormatSample;
+  LOpts: TPasFormatOptions;
+  LNotes: TArray<TPasFormatInferNote>;
+  LMaxFiles, LBudget, LCounted, LSkipped, LIdx, LStride, LStep, LMid: Integer;
+  LPath, LText: string;
+  LStart: UInt64;
+  LBuf: TJsonBuf;
+
+  procedure AddFile(const APath: string);
+  var
+    LFull: string;
+  begin
+    if APath = '' then
+      Exit;
+    LFull := TPath.GetFullPath(APath);
+    if TPasSourceManager.IsDcuPath(LFull) or
+       LSeen.ContainsKey(LowerCase(LFull)) then
+      Exit;
+    LSeen.Add(LowerCase(LFull), True);
+    LFiles.Add(LFull);
+  end;
+
+  // Coprime with ACount, near its golden-ratio share: the visiting order
+  // I * stride mod count touches every file once and spreads any prefix.
+  function StrideFor(ACount: Integer): Integer;
+  var
+    LA, LB, LT: Integer;
+  begin
+    if ACount <= 2 then
+      Exit(1);
+    Result := Max(1, Round(ACount * 0.618));
+    repeat
+      LA := Result;
+      LB := ACount;
+      while LB <> 0 do
+      begin
+        LT := LA mod LB;
+        LA := LB;
+        LB := LT;
+      end;
+      if LA = 1 then
+        Exit;
+      Inc(Result);
+    until False;
+  end;
+
+begin
+  LMaxFiles := 300;
+  LBudget := 10000;
+  if AMsg.Params <> nil then
+  begin
+    LMaxFiles := AMsg.Params.GetValue<Integer>('maxFiles', LMaxFiles);
+    LBudget := AMsg.Params.GetValue<Integer>('budgetMs', LBudget);
+  end;
+  LStart := GetTickCount64;
+  if (Length(FProjectFiles) = 0) and
+     not WaitAnalyzed(FMainSource, AMsg.IdJson) then
+    Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
+  LFiles := TList<string>.Create;
+  LSeen := TDictionary<string, Boolean>.Create;
+  try
+    AddFile(FMainSource);
+    for LPath in FProjectFiles do
+      AddFile(LPath);
+    if (Length(FProjectFiles) = 0) and (FProjectDir <> '') and
+       (FProject <> nil) then
+      for LMid := 0 to FProject.ModelCount - 1 do
+        if FProject.Model(LMid) <> nil then
+        begin
+          LPath := TPath.GetFullPath(FProject.ModelFile(LMid));
+          if LPath.StartsWith(IncludeTrailingPathDelimiter(FProjectDir),
+               True) then
+            AddFile(LPath);
+        end;
+    if FCompletion = nil then
+      FCompletion := TLspCompletionEngine.Create(FPlatform, FSearchPaths,
+        FDefines, FCompilerVersion);
+    SyncCompletionOverlays;
+    LSample := Default(TPasFormatSample);
+    LCounted := 0;
+    LSkipped := 0;
+    LStride := StrideFor(LFiles.Count);
+    for LStep := 0 to LFiles.Count - 1 do
+    begin
+      if (LCounted >= LMaxFiles) or
+         (GetTickCount64 - LStart > UInt64(Max(LBudget, 0))) then
+        Break;
+      if FCancels.IsCancelled(AMsg.IdJson) or ClientGone then
+        Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED,
+          'request cancelled'));
+      LIdx := Integer((Int64(LStep) * LStride) mod LFiles.Count);
+      LText := LiveTextOf(LFiles[LIdx]);
+      if LText = '' then
+        Continue;
+      try
+        if FCompletion.TallyFormat(LFiles[LIdx], LText, LSample) then
+          Inc(LCounted)
+        else
+          Inc(LSkipped);
+      except
+        on E: Exception do
+        begin
+          Inc(LSkipped);
+          Log(Format('%s: %s - %s: %s', [AMsg.Method,
+            TPath.GetFileName(LFiles[LIdx]), E.ClassName, E.Message]));
+        end;
+      end;
+    end;
+    LOpts := PasInferFormatOptions(LSample, LNotes);
+    LBuf.Init(4096);
+    LBuf.Add('{"options":');
+    LBuf.Add(FormatOptionsJson(LOpts));
+    LBuf.Add(',"notes":[');
+    for LIdx := 0 to High(LNotes) do
+    begin
+      if LIdx > 0 then
+        LBuf.Add(',');
+      LBuf.Add('{"option":');
+      LBuf.AddQuoted(LNotes[LIdx].Option);
+      LBuf.Add(',"value":');
+      LBuf.AddQuoted(LNotes[LIdx].Value);
+      LBuf.Add(',"evidence":');
+      LBuf.AddQuoted(LNotes[LIdx].Evidence);
+      LBuf.Add(',"mixed":');
+      LBuf.Add(BoolToStr(LNotes[LIdx].Mixed, True).ToLower);
+      LBuf.Add('}');
+    end;
+    LBuf.Add(Format('],"files":%d,"skipped":%d,"total":%d,"lines":%d,' +
+      '"ms":%d}', [LCounted, LSkipped, LFiles.Count, LSample.Lines,
+      GetTickCount64 - LStart]));
+    Log(Format('%s: %d of %d project file(s) counted, %d skipped, %d lines, '
+      + '%d ms', [AMsg.Method, LCounted, LFiles.Count, LSkipped,
+      LSample.Lines, GetTickCount64 - LStart]));
+    Result := BuildResponse(AMsg.IdJson, LBuf.ToString);
+  finally
+    LSeen.Free;
+    LFiles.Free;
+  end;
+end;
+
 { textDocument/onTypeFormatting - block completion, standard LSP: the client
   declares us for the "\n" trigger (see HandleInitialize), sends the caret
   right after Enter, and gets zero or one TextEdit inserting the missing
@@ -10409,6 +10575,8 @@ begin
         Exit(HandleFormatting(LMsg, {ARange} True));
       if LMsg.Method = 'pastree/formatOptions' then
         Exit(HandleFormatOptions(LMsg));
+      if LMsg.Method = 'pastree/inferFormatOptions' then
+        Exit(HandleInferFormatOptions(LMsg));
       if LMsg.Method = 'textDocument/typeDefinition' then
         Exit(HandleTypeDefinition(LMsg));
       if LMsg.Method = 'textDocument/documentHighlight' then

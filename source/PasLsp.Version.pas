@@ -500,7 +500,7 @@ const
   /// 0.179.3 (2026-11-11): TPasAsyncSession.SetDcuTextFilter and F5's
   /// wrapping and alignment options - an older library has no way to put a
   /// .dcu's text through the formatter before a full analysis.
-  cMinPasTreeVersion = '0.179.3';
+  cMinPasTreeVersion = '0.180.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

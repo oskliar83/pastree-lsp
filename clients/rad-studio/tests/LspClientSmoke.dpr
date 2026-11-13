@@ -4767,6 +4767,7 @@ var
   LPair: TJSONPair;
   LIdx: Integer;
   LAllKnown, LAllSame: Boolean;
+  LInference: TFormatInference;
 
   function FormatParams(AOptions: TJSONObject): TJSONObject;
   var
@@ -4984,6 +4985,23 @@ begin
   finally
     LDefaults.Free;
     LPlugin.Free;
+  end;
+
+  // Derive from project: the fixture project's own units, read by the
+  // server and decided into the plugin's rows (ParseFormatInference).
+  Check(Ask('pastree/inferFormatOptions', TJSONObject.Create),
+    'pastree/inferFormatOptions answered');
+  LDefaults := TJSONObject.ParseJSONValue(GResultJson);
+  try
+    LInference := ParseFormatInference(LDefaults, DefaultFormatValues);
+    Check(LInference.Ok and (LInference.Files > 0) and
+      (LInference.Total >= LInference.Files),
+      Format('inferFormatOptions read the project''s units (%d of %d) %s',
+      [LInference.Files, LInference.Total, LInference.Error]));
+    Check(LInference.Report.Contains('Indent step (spaces): 2 - '),
+      'the fixture''s two-space steps are its indent step');
+  finally
+    LDefaults.Free;
   end;
 end;
 

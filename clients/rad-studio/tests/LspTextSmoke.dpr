@@ -579,6 +579,61 @@ begin
     'no edits: nothing to apply');
 end;
 
+{ Derive from project: an answer of pastree/inferFormatOptions read over the
+  page's values - a decided option replaces its row (a number, a Boolean, a
+  choice by its server name), one without a note keeps the page's value, and
+  an answer that read no unit changes nothing. }
+procedure TestFormatInference;
+var
+  LJson: TJSONValue;
+  LBase: TFormatValues;
+  LResult: TFormatInference;
+begin
+  Writeln;
+  Writeln('=== FormatText: Derive from project ===');
+  LBase := DefaultFormatValues;
+  LBase[FormatOptionIndex('TabWidth')] := 4;
+  LJson := TJSONObject.ParseJSONValue('{"options":{"IndentStep":4,' +
+    '"TabWidth":8,"BeginOnNewLine":false,"ReservedWordCase":"Upper"},' +
+    '"notes":[{"option":"IndentStep","value":"4","evidence":"98%",' +
+    '"mixed":false},{"option":"BeginOnNewLine","value":"off","evidence":' +
+    '"60%","mixed":true},{"option":"ReservedWordCase","value":"upper",' +
+    '"evidence":"99%","mixed":false},{"option":"SomeNewOption","value":"on",' +
+    '"evidence":"x","mixed":false}],"files":3,"skipped":1,"total":5,' +
+    '"lines":100,"ms":1200}');
+  try
+    LResult := ParseFormatInference(LJson, LBase);
+  finally
+    LJson.Free;
+  end;
+  Check(LResult.Ok and (LResult.Files = 3) and (LResult.Total = 5),
+    'the answer is read: ' + LResult.Error);
+  Check((LResult.Values[FormatOptionIndex('IndentStep')] = 4) and
+    (LResult.Values[FormatOptionIndex('BeginOnNewLine')] = 0) and
+    (LResult.Values[FormatOptionIndex('ReservedWordCase')] = 1),
+    'decided rows take the answer''s values');
+  Check(LResult.Values[FormatOptionIndex('TabWidth')] = 4,
+    'a row with no note keeps the page''s value');
+  Check(LResult.Changed = 3, Format('three rows changed (%d)',
+    [LResult.Changed]));
+  Check(LResult.Report.Contains('(mixed: kept as written)') and
+    LResult.Report.Contains('SomeNewOption: on') and
+    LResult.Report.Contains('1 skipped'),
+    'the report says mixed, an unknown option and the skipped units');
+  LJson := TJSONObject.ParseJSONValue('{"options":{"IndentStep":2},' +
+    '"notes":[{"option":"IndentStep","value":"2"}],"files":0,"total":0}');
+  try
+    LBase[FormatOptionIndex('IndentStep')] := 3;
+    LResult := ParseFormatInference(LJson, LBase);
+  finally
+    LJson.Free;
+  end;
+  Check(not LResult.Ok and (LResult.Values[FormatOptionIndex('IndentStep')] = 3)
+    and (LResult.Changed = 0), 'no unit read: nothing changes');
+  LResult := ParseFormatInference(nil, LBase);
+  Check(not LResult.Ok and (LResult.Error <> ''), 'no answer: an error');
+end;
+
 begin
   GFailures := 0;
   TestUri;
@@ -590,6 +645,7 @@ begin
   TestTokenShift;
   TestConfigSwitch;
   TestFormatText;
+  TestFormatInference;
 
   Writeln;
   if GFailures = 0 then
