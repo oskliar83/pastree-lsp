@@ -602,13 +602,28 @@ type
     ListedBy: TArray<TLspListedBy>;
   end;
 
-  /// <summary>Either answer: Entries for unusedUses, Units for
-  /// unreferencedUnits. ProjectFile is the .dproj of the server that
-  /// answered.</summary>
+  /// <summary>A declaration nothing uses (pastree/unusedSymbols): its name
+  /// at Row/Col (Len chars), Name qualified by its types, Kind in prose
+  /// ("function", "field"), and where the index may be wrong (Doubts).
+  /// </summary>
+  TLspUnusedSymbol = record
+    FilePath: string;
+    Row, Col, Len: Integer;
+    Name, Kind: string;
+    Doubts: TArray<string>;
+    TypeSpans: TArray<Integer>;
+  end;
+
+  /// <summary>Any of the three answers: Entries for unusedUses, Units for
+  /// unreferencedUnits, Symbols and Skipped ("105 published members") for
+  /// unusedSymbols. ProjectFile is the .dproj of the server that answered.
+  /// </summary>
   TLspUnusedAnswer = record
     ProjectFile: string;
     Entries: TArray<TLspUnusedEntry>;
     Units: TArray<TLspUnreferencedEntry>;
+    Symbols: TArray<TLspUnusedSymbol>;
+    Skipped: TArray<string>;
   end;
 
   TLspUnusedProc = reference to procedure(ASuccess: Boolean;
@@ -1150,6 +1165,12 @@ procedure LspUnusedUses(const AScope, AFileName: string;
 
 /// <summary>pastree/unreferencedUnits over AFileName's project.</summary>
 procedure LspUnreferencedUnits(const AFileName: string;
+  const AOnDone: TLspUnusedProc);
+
+/// <summary>pastree/unusedSymbols: AScope 'unit' (AFileName's own
+/// declarations) or 'project' - used is judged over the whole project
+/// either way.</summary>
+procedure LspUnusedSymbols(const AScope, AFileName: string;
   const AOnDone: TLspUnusedProc);
 
 /// <summary>pastree/usesRemoval: the edits that take AFiles' names out
@@ -5414,17 +5435,43 @@ var
   LEntry: TLspUnusedEntry;
   LUnit: TLspUnreferencedEntry;
   LBy: TLspListedBy;
+  LSymbol: TLspUnusedSymbol;
+  LSymbols: Integer;
 begin
   Result := Default(TLspUnusedAnswer);
+  LSymbols := 0;
   if not (AResult is TJSONObject) then
     Exit;
+  if AResult.TryGetValue<TJSONArray>('skipped', LArr) then
+    for var LValue in LArr do
+      if (LValue is TJSONObject) and
+         (LValue.GetValue<Integer>('count', 0) > 0) then
+        Result.Skipped := Result.Skipped + [Format('%d %s',
+          [LValue.GetValue<Integer>('count', 0),
+           LValue.GetValue<string>('what', '')])];
   if AResult.TryGetValue<TJSONArray>('rows', LArr) then
     for var LValue in LArr do
     begin
       if not (LValue is TJSONObject) then
         Continue;
       LObj := TJSONObject(LValue);
-      if LObj.TryGetValue<TJSONArray>('listedBy', LListed) then
+      if LObj.GetValue('kind') <> nil then
+      begin
+        LSymbol := Default(TLspUnusedSymbol);
+        if not ReadUnusedLocation(LObj, LSymbol.FilePath, LSymbol.Row,
+          LSymbol.Col, LSymbol.Len) then
+          Continue;
+        LSymbol.Name := LObj.GetValue<string>('name', '');
+        LSymbol.Kind := LObj.GetValue<string>('kind', '');
+        LSymbol.Doubts := ReadStrings(LObj, 'doubts');
+        LSymbol.TypeSpans := ReadIntArray(LObj, 'typeSpans');
+        // Thousands of rows on a large project: grown by halves, not by one.
+        if LSymbols = Length(Result.Symbols) then
+          SetLength(Result.Symbols, LSymbols + LSymbols div 2 + 16);
+        Result.Symbols[LSymbols] := LSymbol;
+        Inc(LSymbols);
+      end
+      else if LObj.TryGetValue<TJSONArray>('listedBy', LListed) then
       begin
         LUnit := Default(TLspUnreferencedEntry);
         if not ReadUnusedLocation(LObj, LUnit.FilePath, LUnit.Row, LUnit.Col,
@@ -5461,6 +5508,7 @@ begin
         Result.Entries := Result.Entries + [LEntry];
       end;
     end;
+  SetLength(Result.Symbols, LSymbols);
 end;
 
 procedure TLspSession.UnusedUnits(const AMethod, AScope, AFileName: string;
@@ -7478,6 +7526,20 @@ begin
     Exit;
   end;
   LSession.UnusedUnits('pastree/unreferencedUnits', '', AFileName, AOnDone);
+end;
+
+procedure LspUnusedSymbols(const AScope, AFileName: string;
+  const AOnDone: TLspUnusedProc);
+var
+  LSession: TLspSession;
+begin
+  LSession := SessionForRequest(AFileName);
+  if LSession = nil then
+  begin
+    AOnDone(False, Default(TLspUnusedAnswer), 'LSP session not initialized');
+    Exit;
+  end;
+  LSession.UnusedUnits('pastree/unusedSymbols', AScope, AFileName, AOnDone);
 end;
 
 procedure LspUsesRemoval(const AFileName: string;

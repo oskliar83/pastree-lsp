@@ -128,9 +128,11 @@ type
     // PasTree 0.112.0's OptionsAt: the same question about compiler
     // options, PasTreeIdePlugin.FindDefines too, never greyed.
     faiOptionsAtCursor,
-    // PasTree 0.93.0's unused-units checks - PasTreeIdePlugin.UnusedUnits;
-    // project questions like the define inventories, never greyed.
-    faiUnusedUnits, faiProjectUnusedUnits, faiUnreferencedUnits);
+    // Unused... (0.89.0): one item for unused declarations, unused uses
+    // entries and units nobody uses - its dialog asks which and where
+    // (PasTreeIdePlugin.UnusedForm, .UnusedUnits); never greyed. It was
+    // three items, one per question, until Alex merged them (2026-11-14).
+    faiUnused);
 
   TMenuManager = class
   private
@@ -333,14 +335,14 @@ const
     ('References', 'Overrides', 'Implementations', 'Descendants',
      'Assignments', 'Creations', 'Destructions',
      'Defines', 'DefinesAtCursor', 'OptionsAtCursor',
-     'UnusedUnits', 'ProjectUnusedUnits', 'UnreferencedUnits');
+     'Unused');
   // What the menu actually shows - "Defines at cursor" reads as PasTree's
   // own demo has it, a space its Name/Category may not carry.
   cItemCaption: array[TFindAllItem] of string =
     ('References', 'Overrides', 'Implementations', 'Descendants',
      'Assignments', 'Creations', 'Destructions',
      'Defines', 'Defines at cursor', 'Options at cursor',
-     'Unused Units', 'Unused Units in the Project', 'Units Nobody Uses');
+     'Unused...');
 var
   LAction: TAction;
   LItem: TFindAllItem;
@@ -371,16 +373,16 @@ begin
       OnFindAllItemUpdate leaves it alone: ItemOf answers False for it (it
       is in no FItemActions slot), which disables it - exactly what a
       separator wants to be. }
-    if LItem in [faiDefines, faiUnusedUnits] then
+    if LItem in [faiDefines, faiUnused] then
     begin
       // One more in front of the unused-units checks: a third family, as
       // the demo's menu groups them. Names and categories must differ.
       LAction := TAction.Create(FActionList);
       LAction.Name := 'PasTreeFindAllSeparator' +
-        IfThen(LItem = faiUnusedUnits, '2', '');
+        IfThen(LItem = faiUnused, '2', '');
       LAction.Caption := '-';
       LAction.Category := cFindAllCategory + '.Separator' +
-        IfThen(LItem = faiUnusedUnits, '2', '');
+        IfThen(LItem = faiUnused, '2', '');
       LAction.DisableIfNoHandler := False;
       LAction.OnUpdate := OnFindAllItemUpdate;
       LAction.Enabled := False;
@@ -635,8 +637,7 @@ begin
     // for them and they are always offered, exactly as PasTree's own demo
     // greys nothing on these two.
     faiDefines, faiDefinesAtCursor, faiOptionsAtCursor: Result := True;
-    faiUnusedUnits, faiProjectUnusedUnits, faiUnreferencedUnits:
-      Result := True;
+    faiUnused: Result := True;
   else
     Result := True;
   end;
@@ -723,12 +724,7 @@ begin
       faiDefines:         ExecuteFindDefines(FEditorServices.TopView);
       faiDefinesAtCursor: ExecuteDefinesAtCursor(FEditorServices.TopView);
       faiOptionsAtCursor: ExecuteOptionsAtCursor(FEditorServices.TopView);
-      faiUnusedUnits:
-        ExecuteUnusedUnits(uucUnit, FEditorServices.TopView);
-      faiProjectUnusedUnits:
-        ExecuteUnusedUnits(uucProject, FEditorServices.TopView);
-      faiUnreferencedUnits:
-        ExecuteUnusedUnits(uucNobody, FEditorServices.TopView);
+      faiUnused:          ExecuteUnused(FEditorServices.TopView);
     end;
   except
     on E: Exception do

@@ -611,8 +611,9 @@ begin
 
   Check(Ask('pastree/optionsAt', PositionParams(LFile, 0, 0)),
     'optionsAt on the unit header answered');
-  Check(GOk and (Length(GResultJson.Split(['"option":'])) = 26),
-    'with 25 rows, one per option');
+  // 26 since PasTree 0.183.0, which tracks {$LEGACYIFEND} as an option.
+  Check(GOk and (Length(GResultJson.Split(['"option":'])) = 27),
+    'with 26 rows, one per option');
   Check(GOk and not GResultJson.Contains('"origin":"unit"'),
     'none set by the unit yet');
   Check(GOk and GResultJson.Contains(Row('$R- RANGECHECKS OFF', 'RANGECHECKS',
@@ -5398,6 +5399,30 @@ begin
     Check(GOk and GResultJson.Contains('"unitName":"UB"') and
       not GResultJson.Contains('"unitName":"UStr"'),
       'UMulti: UB is unused there, UStr is used');
+
+    // pastree/unusedSymbols (0.89.0): UA's one declaration is used by the
+    // program - an empty answer, the not-weighed counts still there; over
+    // the project UNobody's N is the one declaration nothing calls (BProc,
+    // Reg and S are called, ULoc's L is written).
+    LParams := UnusedParams('unit');
+    Check(Ask('pastree/unusedSymbols', LParams),
+      'unusedSymbols (unit) answered');
+    Check(GOk and GResultJson.Contains('"rows":[]') and
+      GResultJson.Contains('"skipped":['),
+      'UA: nothing unused, and the skipped list is there');
+    LParams := UnusedParams('project');
+    Check(Ask('pastree/unusedSymbols', LParams),
+      'unusedSymbols (project) answered');
+    Check(GOk and GResultJson.Contains('"name":"N","kind":"procedure"'),
+      'UNobody: N is unused, a procedure');
+    Check(GOk and not GResultJson.Contains('"name":"BProc"') and
+      not GResultJson.Contains('"name":"Reg"') and
+      not GResultJson.Contains('"name":"S"') and
+      not GResultJson.Contains('"name":"L"'),
+      'BProc, Reg and S are called, L is written - none is a row');
+    LParams := UnusedParams('library');
+    Check(Ask('pastree/unusedSymbols', LParams) and not GOk,
+      'unusedSymbols: a scope other than unit or project is refused');
 
     // Remove: the edits on the text as it is now (pastree/usesRemoval).
     LParams := RemovalParams('UA.pas', ['UHelper']);

@@ -644,6 +644,7 @@ type
     function HandleUseUnit(const AMsg: TLspIncoming): string;
     function HandleUnusedUses(const AMsg: TLspIncoming): string;
     function HandleUnreferencedUnits(const AMsg: TLspIncoming): string;
+    function HandleUnusedSymbols(const AMsg: TLspIncoming): string;
     function ProjectUnitMids: TArray<Integer>;
     { The files of AMids, for a workspace query - a file survives the
       rebuild a query may run, a model id does not. }
@@ -8869,6 +8870,128 @@ begin
   end;
 end;
 
+{ pastree/unusedSymbols - OURS (0.89.0). The declarations nothing in the
+  analysis uses (PasTree.Sema.Lint.FindUnusedSymbols, PasTree 0.191.0):
+  `scope` "unit" the document's own declarations, "project" those of every
+  unit of the analysis outside LibraryPaths - used is judged over the whole
+  analysis either way. Rows are Locations of the declaration's name with
+  typeSpans, `name` (qualified by the types it is declared in), `kind`
+  (prose: "type", "function", "field"...) and `doubts` (where the index may
+  be wrong; the client hides such rows unless asked for them). `skipped`
+  says what was not weighed at all - published members, virtual methods,
+  interface members... - by a count each, so an empty answer is not read
+  as "everything is used". Nothing is removed from here (Alex, 2026-11-14). }
+function TLspServer.HandleUnusedSymbols(const AMsg: TLspIncoming): string;
+const
+  cSkipWord: array[TPasUnusedSkip] of string = ('published members',
+    'virtual, dynamic or message methods', 'interface members',
+    'methods an interface names', 'operators', 'class constructors',
+    'attribute constructors', 'for-in methods', 'generated units',
+    'units that replace a library unit');
+var
+  LPath, LScope, LKind, LName, LSkipped: string;
+  LMids: TArray<Integer>;
+  LRows: TArray<TPasUnusedSymbol>;
+  LSkips: TPasUnusedSkips;
+  LMid, LAt, LDoubtful, LNotSearched: Integer;
+  LHit: TPasRefHit;
+  LSB: TStringBuilder;
+  LStart: UInt64;
+begin
+  LPath := DocPathOf(AMsg.Params);
+  LScope := 'unit';
+  if AMsg.Params <> nil then
+    LScope := AMsg.Params.GetValue<string>('scope', 'unit');
+  if (LScope <> 'unit') and (LScope <> 'project') then
+    Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
+      'unusedSymbols: scope must be "unit" or "project"'));
+  if not WaitAnalyzed(LPath, AMsg.IdJson) then
+    Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
+  if FNav = nil then
+    Exit(BuildResponse(AMsg.IdJson, '{"rows":[],"skipped":[]}'));
+  LStart := GetTickCount64;
+  if LScope = 'unit' then
+  begin
+    LMid := FNav.ModelIdOf(LPath);
+    if LMid < 0 then
+      Exit(BuildError(AMsg.IdJson, LSP_REQUEST_FAILED,
+        TPath.GetFileName(LPath) + ' is not part of the analysis'));
+    LMids := [LMid];
+  end
+  else
+    LMids := ProjectUnitMids;
+  // Through the workspace: in light mode a library body may use an own
+  // declaration, and the demand makes those bodies full first.
+  LRows := FWS.FindUnusedSymbols(ModelFiles(LMids), LSkips);
+  LNotSearched := WsDone('pastree/unusedSymbols');
+  if FWS.Status.Cancelled then
+    Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
+
+  LSB := TStringBuilder.Create;
+  try
+    LDoubtful := 0;
+    for var LIdx := 0 to High(LRows) do
+    begin
+      case LRows[LIdx].Kind of
+        skType: LKind := 'type';
+        skVar: LKind := 'variable';
+        skConst: LKind := 'constant';
+        skField: LKind := 'field';
+        skProperty: LKind := 'property';
+        skRoutine:
+          case LRows[LIdx].Head of
+            rhFunction: LKind := 'function';
+            rhConstructor: LKind := 'constructor';
+            rhDestructor: LKind := 'destructor';
+            rhOperator: LKind := 'operator';
+          else
+            LKind := 'procedure';
+          end;
+      else
+        LKind := 'symbol';
+      end;
+      // The name written at Line:Col is the last segment of the qualified
+      // name, without a generic's parameter list.
+      LName := LRows[LIdx].Name;
+      LAt := Pos('<', LName);
+      if LAt > 0 then
+        LName := Copy(LName, 1, LAt - 1);
+      LAt := LastDelimiter('.', LName);
+      LHit := Default(TPasRefHit);
+      LHit.FilePath := LRows[LIdx].FileName;
+      LHit.Line := LRows[LIdx].Line;
+      LHit.Col := LRows[LIdx].Col;
+      LHit.HiFrom := LHit.Col - 1;
+      LHit.HiTo := LHit.HiFrom + Length(LName) - LAt;
+      if LRows[LIdx].Doubts <> nil then
+        Inc(LDoubtful);
+      if LIdx > 0 then
+        LSB.Append(',');
+      LSB.Append(WithMembers(WithTypeSpans(HitLocationJson(LHit),
+        LineTypeSpansJson(LHit.FilePath, LHit.Line)),
+        Format(',"name":%s,"kind":%s,"doubts":%s',
+        [JsonQuote(LRows[LIdx].Name), JsonQuote(LKind),
+         StringsJson(LRows[LIdx].Doubts)])));
+    end;
+    LSkipped := '';
+    for var LSkip := Low(TPasUnusedSkip) to High(TPasUnusedSkip) do
+      if LSkips[LSkip] > 0 then
+      begin
+        if LSkipped <> '' then
+          LSkipped := LSkipped + ',';
+        LSkipped := LSkipped + Format('{"what":%s,"count":%d}',
+          [JsonQuote(cSkipWord[LSkip]), LSkips[LSkip]]);
+      end;
+    Log(Format('unusedSymbols %s: %d units checked -> %d declarations, %d ' +
+      'with a doubt, in %d ms', [LScope, Length(LMids), Length(LRows),
+      LDoubtful, GetTickCount64 - LStart]));
+    Result := BuildResponse(AMsg.IdJson, '{"rows":[' + LSB.ToString + ']' +
+      ',"skipped":[' + LSkipped + ']' + NotSearchedMember(LNotSearched) + '}');
+  finally
+    LSB.Free;
+  end;
+end;
+
 { pastree/usesRemoval - OURS. Unused Units' Remove: `files`, each a `uri`
   and the `names` to take out of its `uses` clauses, answered with the
   clause rewrites (uri, range, oldText, newText - PasLsp.UnusedUnits) on
@@ -10563,6 +10686,8 @@ begin
         Exit(HandleUnusedUses(LMsg));
       if LMsg.Method = 'pastree/unreferencedUnits' then
         Exit(HandleUnreferencedUnits(LMsg));
+      if LMsg.Method = 'pastree/unusedSymbols' then
+        Exit(HandleUnusedSymbols(LMsg));
       if LMsg.Method = 'pastree/usesRemoval' then
         Exit(HandleUsesRemoval(LMsg));
       if LMsg.Method = 'pastree/useUnit' then

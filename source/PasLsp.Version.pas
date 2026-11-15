@@ -500,7 +500,12 @@ const
   /// 0.179.3 (2026-11-11): TPasAsyncSession.SetDcuTextFilter and F5's
   /// wrapping and alignment options - an older library has no way to put a
   /// .dcu's text through the formatter before a full analysis.
-  cMinPasTreeVersion = '0.180.0';
+  /// 0.195.0 (2026-11-15): FindUnusedSymbols (0.191.0) with the false rows a
+  /// recompile of a large project found closed - republished properties,
+  /// implements, EXTERNALSYM names, enum values, helpers, form-bound
+  /// methods counted, library-replacing units skipped (usReplacesLibrary,
+  /// which cSkipWord names) - an older library lists them as unused.
+  cMinPasTreeVersion = '0.195.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

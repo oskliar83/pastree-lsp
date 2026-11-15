@@ -1,32 +1,45 @@
 unit PasTreeIdePlugin.UnusedUnits;
 
 {
-  Find All > Unused Units, Unused Units in the Project, Units Nobody Uses -
-  PasTree 0.93.0's unused-units checks (PasTree.Sema.Lint, the demo's three
-  commands), with the results as a tree in a tab of its own per command
-  ("Unused Units", "Unused Units in the Project", "Units Nobody Uses" -
-  without the "PasTree " the other result tabs carry, which made these
-  captions too long, Alex 2026-10-06) and a toolbar above it: Remove takes
+  Find All > Unused... (0.89.0) - one command in place of the three it was
+  (Unused Units, Unused Units in the Project, Units Nobody Uses; Alex,
+  2026-11-14). A dialog (PasTreeIdePlugin.UnusedForm) asks where - the unit
+  in the editor or its project - and what: unused declarations (PasTree
+  0.191.0's FindUnusedSymbols), unused `uses` entries, units nobody uses
+  (project only), and whether rows with a doubt are shown at all. The
+  answers go into ONE tab, "Unused", with a toolbar above it: Remove takes
   the selected unit out, Remove All every one, Revert takes the last Remove
-  back.
+  back. Declarations are shown, never removed (Alex, 2026-11-14: Remove for
+  them is deferred - a routine's declaration, its body, a forward and the
+  $IFDEF branches are one removal, and a row may be a namesake).
 
-  WHAT IS OFFERED IS THE SERVER'S. It answers pastree/unusedUses (the unit
-  in the editor, or every unit of the project outside the library paths)
-  and pastree/unreferencedUnits, with the rows and why a row is kept (its
-  doubts - shown, never removed). A unit whose initialization reaches
-  outside itself is not offered at all - it is in `uses` for what it
-  registers (PasTree's loHideGlobalInit, Alex 2026-10-05).
+  WHAT IS OFFERED IS THE SERVER'S. It answers pastree/unusedSymbols,
+  pastree/unusedUses (the unit in the editor, or every unit of the project
+  outside the library paths) and pastree/unreferencedUnits, asked one after
+  the other - the wait dialog says which step of how many is running, one
+  progress for the whole search, never a line per unit. A unit whose
+  initialization reaches outside itself is not offered at all - it is in
+  `uses` for what it registers (PasTree's loHideGlobalInit, Alex
+  2026-10-05). A row with a doubt is dropped here, on arrival, unless the
+  dialog asked for them: then it is shown with its doubts under it, and a
+  `uses` entry or a unit with a doubt is never removed.
 
-  THE TREE (Alex, 2026-10-06: the file name alone on top, no tags): a top
-  row per node - the file for Unused Units, the unit for Units Nobody Uses -
-  named by its file name. Under it the `uses` lines: the unused entries,
-  the name marked; for a unit nobody uses, every entry still naming it. A
-  note under a row says why it is kept ("kept: ...") or why no edit removes
-  it.
-  Unused Units of the one unit in the editor (Alex, 2026-10-06, second
-  shape): no file row - the top level is "interface (N)" and
-  "implementation (N)", each shown only when N > 0, the `uses` lines under
-  them as above. A node there is one entry, not the file.
+  THE TREE: a title row with the counts, then a row per part searched that
+  found anything - "declarations (N)", "units in uses (N)", "units nobody
+  uses (N)". Under declarations: what was not weighed at all (published
+  members, virtual methods - the server's `skipped`), then the declarations
+  - by file for the project, the unit's own directly. Under units in uses:
+  for the unit "interface (N)" / "implementation (N)" (Alex, 2026-10-06),
+  for the project a row per file (its file name alone, no tags - Alex,
+  2026-10-06), the `uses` lines under it with the name marked. Under units
+  nobody uses: a row per unit's file and every `uses` entry still naming
+  it. A note under a row says why it is kept ("kept: ...") or why no edit
+  removes it.
+
+  A NODE is one row Remove can act on, or one declaration: the entries, the
+  units nobody uses and the declarations, numbered in that order (NodeCount
+  and the Node* functions). A section or file row stands for every node
+  under it.
 
   REMOVE IS PER NODE, so a unit can be taken out and the project compiled
   before the next one (Alex, 2026-10-06): Remove takes the node selected in
@@ -42,14 +55,14 @@ unit PasTreeIdePlugin.UnusedUnits;
   unsaved). The save drops the editor's undo history unless the editor's
   "Undo after save" is on - Revert is the way back. Files nobody has open
   are rewritten on disk in their own
-  encoding (PasLsp.SourceText). For Units Nobody Uses each unit is also
-  taken out of the project (IOTAProject.RemoveFile - which edits the .dpr's
-  own uses), and the project is saved. A removed node leaves the tree; the
-  rows left are moved to the lines the edits left them on (MoveRows - on
-  AVImark every row under a removed interface clause pointed lines too low,
-  2026-10-06), and Revert puts back the positions it took. The tab is
-  rebuilt (the ToolsAPI has no way to drop one row), and the selection is
-  put on the node after the removed ones (SelectNode).
+  encoding (PasLsp.SourceText). A unit nobody uses is also taken out of the
+  project (IOTAProject.RemoveFile - which edits the .dpr's own uses), and
+  the project is saved. A removed node leaves the tree; the rows left - the
+  declarations too - are moved to the lines the edits left them on
+  (MoveRows - on AVImark every row under a removed interface clause pointed
+  lines too low, 2026-10-06), and Revert puts back the positions it took.
+  The tab is rebuilt (the ToolsAPI has no way to drop one row), and the
+  selection is put on the node after the removed ones (SelectNode).
 
   REVERT takes the LAST Remove back, and again the one before - a stack.
   Every rewritten clause must still read what that Remove wrote, at the
@@ -70,13 +83,9 @@ interface
 uses
   ToolsAPI;
 
-type
-  TUnusedUnitsCommand = (uucUnit, uucProject, uucNobody);
-
-/// <summary>Runs one of the three checks for the file in AView (any file
-/// of the project for the two project-wide ones).</summary>
-procedure ExecuteUnusedUnits(ACommand: TUnusedUnitsCommand;
-  const AView: IOTAEditView);
+/// <summary>Asks what to look for (the Unused dialog) about the file in
+/// AView or its project, then searches.</summary>
+procedure ExecuteUnused(const AView: IOTAEditView);
 
 /// <summary>Drops the results tab because the project it describes is
 /// closing.</summary>
@@ -94,15 +103,13 @@ uses
   PasLsp.SourceText,
   PasTreeIdePlugin.LspSession, PasTreeIdePlugin.LspDocuments,
   PasTreeIdePlugin.ResultRows, PasTreeIdePlugin.RenameToolbar,
-  PasTreeIdePlugin.WaitDialog, PasTreeIdePlugin.FormModules;
+  PasTreeIdePlugin.WaitDialog, PasTreeIdePlugin.FormModules,
+  PasTreeIdePlugin.UnusedForm;
 
 const
-  // A tab per command (Alex, 2026-10-06: Unused Units and Units Nobody Uses
-  // shared one, and each search threw the other's results and Removes away).
-  cMessageGroupName: array[TUnusedUnitsCommand] of string = (
-    'Unused Units',
-    'Unused Units in the Project',
-    'Units Nobody Uses');
+  // One tab for every part (Alex, 2026-11-14). Without the "PasTree " the
+  // other result tabs carry, as the three tabs before it (Alex, 2026-10-06).
+  cMessageGroupName = 'Unused';
   cRemoveButton = 0;
   cRemoveAllButton = 1;
   cRevertButton = 2;
@@ -133,48 +140,43 @@ type
     Before: TLspUnusedAnswer;   // the rows' positions before it, for Revert
   end;
 
+  TNodeKind = (nkEntry, nkUnit, nkSymbol);
+
 type
-  // One command's tab and everything its toolbar works on.
+  // The tab and everything its toolbar works on.
   TUnusedTab = class
-    Command: TUnusedUnitsCommand;
     Caption: string;                // the message group's name
     Group: IOTAMessageGroup;        // set once the tab was shown
-    Answer: TLspUnusedAnswer;
+    Options: TUnusedOptions;        // what the search asked for
+    Answer: TLspUnusedAnswer;       // the three answers, doubts dropped unless asked
     TitleFile: string;
-    // The nodes: for Unused Units in the Project the files of Answer.Entries
-    // in order (a node is an index into Files), for Unused Units the entries
-    // themselves, for Units Nobody Uses Answer.Units (an index into either).
-    Files: TArray<string>;
     Removals: TArray<TRemoval>;     // in order; Revert takes the last back
     // A shown row -> its nodes: one, or every node under a section row.
     RowNode: TDictionary<Pointer, TArray<Integer>>;
     TopNode: TArray<TArray<Integer>>;  // the top-level rows -> nodes, nil title
-    // The nodes in the order shown, and the row each is selected by (its
-    // `uses` line for Unused Units, its file row otherwise) - for the
+    // The removable nodes in the order shown, and the row each is selected
+    // by (its `uses` line for an entry, its file row for a unit) - for the
     // selection after a Remove.
     ShownNode: TArray<Integer>;
     ShownRow: TArray<Pointer>;
     Busy: Boolean;                  // a Remove waits for its edits
     Generation: Integer;            // a new search or a closed tab
-    constructor Create(ACommand: TUnusedUnitsCommand);
+    constructor Create;
     destructor Destroy; override;
     procedure Clear;
   end;
 
 var
   GAlive: Boolean = True;
-  GTabs: array[TUnusedUnitsCommand] of TUnusedTab;
-  { THE TAB THE CODE BELOW WORKS ON. Every entry point - a search, a toolbar
-    click, a server's answer, a queued selection - sets it to its own tab
-    first (UseTab), and everything runs on the main thread, so the routines
-    under it read one tab's state without passing it down. }
+  { The tab. Every entry point - a search, a toolbar click, a server's
+    answer, a queued selection - goes through UseTab, and everything runs
+    on the main thread. }
   GTab: TUnusedTab;
 
-constructor TUnusedTab.Create(ACommand: TUnusedUnitsCommand);
+constructor TUnusedTab.Create;
 begin
   inherited Create;
-  Command := ACommand;
-  Caption := cMessageGroupName[ACommand];
+  Caption := cMessageGroupName;
   RowNode := TDictionary<Pointer, TArray<Integer>>.Create;
 end;
 
@@ -189,7 +191,6 @@ begin
   Inc(Generation);
   Group := nil;
   Answer := Default(TLspUnusedAnswer);
-  Files := nil;
   Removals := nil;
   TopNode := nil;
   ShownNode := nil;
@@ -198,22 +199,21 @@ begin
   RowNode.Clear;
 end;
 
-// Makes ACommand's tab the one worked on; False once the package is going.
-function UseTab(ACommand: TUnusedUnitsCommand): Boolean;
+// Makes sure the tab exists; False once the package is going.
+function UseTab: Boolean;
 begin
   Result := GAlive;
   if not Result then
     Exit;
-  if not Assigned(GTabs[ACommand]) then
-    GTabs[ACommand] := TUnusedTab.Create(ACommand);
-  GTab := GTabs[ACommand];
+  if not Assigned(GTab) then
+    GTab := TUnusedTab.Create;
 end;
 
 procedure LogDiagnostic(const AMessage: string);
 var
   LMessageServices: IOTAMessageServices;
 begin
-  LspLogToServer('unused units: ' + AMessage);
+  LspLogToServer('unused: ' + AMessage);
   if Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
     LMessageServices.AddTitleMessage('[pastree] ' + AMessage);
 end;
@@ -495,14 +495,34 @@ end;
 
 { -------- the nodes -------- }
 
+// The entries, then the units nobody uses, then the declarations.
 function NodeCount: Integer;
 begin
-  case GTab.Command of
-    uucUnit: Result := Length(GTab.Answer.Entries);
-    uucNobody: Result := Length(GTab.Answer.Units);
-  else
-    Result := Length(GTab.Files);
-  end;
+  Result := Length(GTab.Answer.Entries) + Length(GTab.Answer.Units) +
+    Length(GTab.Answer.Symbols);
+end;
+
+// What ANode is, and its index in that kind's array.
+function NodeKind(ANode: Integer; out AIndex: Integer): TNodeKind;
+begin
+  AIndex := ANode;
+  if AIndex < Length(GTab.Answer.Entries) then
+    Exit(nkEntry);
+  Dec(AIndex, Length(GTab.Answer.Entries));
+  if AIndex < Length(GTab.Answer.Units) then
+    Exit(nkUnit);
+  Dec(AIndex, Length(GTab.Answer.Units));
+  Result := nkSymbol;
+end;
+
+function UnitNode(AIndex: Integer): Integer;
+begin
+  Result := Length(GTab.Answer.Entries) + AIndex;
+end;
+
+function SymbolNode(AIndex: Integer): Integer;
+begin
+  Result := Length(GTab.Answer.Entries) + Length(GTab.Answer.Units) + AIndex;
 end;
 
 function NodeRemoved(ANode: Integer): Boolean;
@@ -520,44 +540,51 @@ begin
   Result := (AEntry.Doubts = nil) and (AEntry.Refused = '');
 end;
 
-// Whether ANode has anything Remove takes out.
+// Whether ANode has anything Remove takes out. A declaration never has.
 function NodeRemovable(ANode: Integer): Boolean;
+var
+  LIdx: Integer;
 begin
-  case GTab.Command of
-    uucUnit: Exit(EntryRemovable(GTab.Answer.Entries[ANode]));
-    uucNobody: Exit(GTab.Answer.Units[ANode].Doubts = nil);
+  case NodeKind(ANode, LIdx) of
+    nkEntry: Result := EntryRemovable(GTab.Answer.Entries[LIdx]);
+    nkUnit: Result := GTab.Answer.Units[LIdx].Doubts = nil;
+  else
+    Result := False;
   end;
-  for var LEntry in GTab.Answer.Entries do
-    if SameText(LEntry.FilePath, GTab.Files[ANode]) and EntryRemovable(LEntry) then
-      Exit(True);
-  Result := False;
 end;
 
 function NodeFile(ANode: Integer): string;
+var
+  LIdx: Integer;
 begin
-  case GTab.Command of
-    uucUnit: Result := GTab.Answer.Entries[ANode].FilePath;
-    uucNobody: Result := GTab.Answer.Units[ANode].FilePath;
+  case NodeKind(ANode, LIdx) of
+    nkEntry: Result := GTab.Answer.Entries[LIdx].FilePath;
+    nkUnit: Result := GTab.Answer.Units[LIdx].FilePath;
   else
-    Result := GTab.Files[ANode];
+    Result := GTab.Answer.Symbols[LIdx].FilePath;
   end;
 end;
 
-// What a message about ANode calls it: the unit for Unused Units, else the
-// file.
+// What a message about ANode calls it: the unit for an entry, the file for
+// a unit nobody uses, the name for a declaration.
 function NodeName(ANode: Integer): string;
+var
+  LIdx: Integer;
 begin
-  if GTab.Command = uucUnit then
-    Result := GTab.Answer.Entries[ANode].UnitName
+  case NodeKind(ANode, LIdx) of
+    nkEntry: Result := GTab.Answer.Entries[LIdx].UnitName;
+    nkUnit: Result := ExtractFileName(GTab.Answer.Units[LIdx].FilePath);
   else
-    Result := ExtractFileName(NodeFile(ANode));
+    Result := GTab.Answer.Symbols[LIdx].Name;
+  end;
 end;
 
 // The nodes left that Remove All takes.
 function RemovableNodes: TArray<Integer>;
 begin
   Result := nil;
-  for var LNode := 0 to NodeCount - 1 do
+  for var LNode := 0 to Length(GTab.Answer.Entries) +
+    Length(GTab.Answer.Units) - 1 do
     if not NodeRemoved(LNode) and NodeRemovable(LNode) then
       Result := Result + [LNode];
 end;
@@ -591,19 +618,43 @@ begin
     not GTab.Busy and (GTab.Removals <> nil));
 end;
 
-procedure RemoveClick(ACommand: TUnusedUnitsCommand); forward;
-procedure RemoveAllClick(ACommand: TUnusedUnitsCommand); forward;
-procedure RevertClick(ACommand: TUnusedUnitsCommand); forward;
+procedure RemoveClick; forward;
+procedure RemoveAllClick; forward;
+procedure RevertClick; forward;
+
+// ANodes grouped by NodeFile, in the order the files first come.
+function ByFile(const ANodes: TArray<Integer>): TArray<TArray<Integer>>;
+var
+  LAt: TDictionary<string, Integer>;
+  LIdx: Integer;
+begin
+  Result := nil;
+  LAt := TDictionary<string, Integer>.Create;
+  try
+    for var LNode in ANodes do
+    begin
+      if not LAt.TryGetValue(LowerCase(NodeFile(LNode)), LIdx) then
+      begin
+        LIdx := Length(Result);
+        SetLength(Result, LIdx + 1);
+        LAt.Add(LowerCase(NodeFile(LNode)), LIdx);
+      end;
+      Result[LIdx] := Result[LIdx] + [LNode];
+    end;
+  finally
+    LAt.Free;
+  end;
+end;
 
 procedure Report;
 var
   LMessageServices: IOTAMessageServices;
   LGroup: IOTAMessageGroup;
   LCache: TObjectDictionary<string, TStringList>;
-  LTitle, LCount: string;
-  LTop: Pointer;
-  LShown, LRemoved, LCountAt: Integer;
-  LCommand: TUnusedUnitsCommand;   // the buttons' tab, captured
+  LTitle, LParts: string;
+  LEntries, LUnits, LSymbols: TArray<Integer>;
+  LRemoved: Integer;
+  LIdx: Integer;
 
   procedure Note(ANode: Integer; const ALeadIn, AText: string;
     AParent: Pointer);
@@ -612,50 +663,172 @@ var
       ALeadIn, AText), AParent), [ANode]);
   end;
 
-  // An unused entry's `uses` line under AParent, and its notes under it.
-  procedure EntryRow(const AEntry: TLspUnusedEntry; ANode: Integer;
-    AParent: Pointer);
+  // A top-level row "ACaption (N)" standing for ANodes.
+  function PartRow(const ACaption: string;
+    const ANodes: TArray<Integer>): Pointer;
   var
-    LRowPtr: Pointer;
+    LCount: string;
   begin
-    LRowPtr := LMessageServices.AddCustomMessage(NewSnippetRow(
-      AEntry.FilePath, AEntry.Row, AEntry.Col, SnippetOf(LCache,
-      AEntry.FilePath, AEntry.Row), AEntry.Col, AEntry.Len, '',
-      AEntry.TypeSpans), AParent);
-    GTab.RowNode.AddOrSetValue(LRowPtr, [ANode]);
-    if GTab.Command = uucUnit then
-    begin
-      GTab.ShownNode := GTab.ShownNode + [ANode];
-      GTab.ShownRow := GTab.ShownRow + [LRowPtr];
-    end;
-    for var LDoubt in AEntry.Doubts do
-      Note(ANode, 'kept: ', LDoubt, LRowPtr);
-    if (AEntry.Doubts = nil) and (AEntry.Refused <> '') then
-      Note(ANode, 'not removable: ', AEntry.Refused, LRowPtr);
+    LCount := IntToStr(Length(ANodes));
+    Result := LMessageServices.AddCustomMessagePtr(NewTitleRow(
+      ACaption + ' (' + LCount + ')', Length(ACaption) + 3, Length(LCount)),
+      LGroup);
+    GTab.RowNode.AddOrSetValue(Result, ANodes);
+    GTab.TopNode := GTab.TopNode + [ANodes];
   end;
 
-  // Unused Units: "interface (N)" / "implementation (N)", the entries of
-  // that section left under it; nothing when none is left.
-  procedure SectionRows(const ASection: string);
+  // A sub-row "ACaption (N)" under AParent standing for ANodes.
+  function SectionRow(const ACaption: string; const ANodes: TArray<Integer>;
+    AParent: Pointer): Pointer;
+  var
+    LCount: string;
+  begin
+    LCount := IntToStr(Length(ANodes));
+    Result := LMessageServices.AddCustomMessage(NewTitleRow(
+      ACaption + ' (' + LCount + ')', Length(ACaption) + 3, Length(LCount)),
+      AParent);
+    GTab.RowNode.AddOrSetValue(Result, ANodes);
+  end;
+
+  function FileRow(const APath: string; const ANodes: TArray<Integer>;
+    AParent: Pointer): Pointer;
+  begin
+    Result := LMessageServices.AddCustomMessage(NewFileNameRow(APath),
+      AParent);
+    GTab.RowNode.AddOrSetValue(Result, ANodes);
+  end;
+
+  // An unused entry's `uses` line under AParent, and its notes under it.
+  procedure EntryRow(ANode: Integer; AParent: Pointer);
+  var
+    LRowPtr: Pointer;
+    LEntry: TLspUnusedEntry;
+  begin
+    LEntry := GTab.Answer.Entries[ANode];
+    LRowPtr := LMessageServices.AddCustomMessage(NewSnippetRow(
+      LEntry.FilePath, LEntry.Row, LEntry.Col, SnippetOf(LCache,
+      LEntry.FilePath, LEntry.Row), LEntry.Col, LEntry.Len, '',
+      LEntry.TypeSpans), AParent);
+    GTab.RowNode.AddOrSetValue(LRowPtr, [ANode]);
+    GTab.ShownNode := GTab.ShownNode + [ANode];
+    GTab.ShownRow := GTab.ShownRow + [LRowPtr];
+    for var LDoubt in LEntry.Doubts do
+      Note(ANode, 'kept: ', LDoubt, LRowPtr);
+    if (LEntry.Doubts = nil) and (LEntry.Refused <> '') then
+      Note(ANode, 'not removable: ', LEntry.Refused, LRowPtr);
+  end;
+
+  // A declaration's line, its kind as the tag, its doubts under it.
+  procedure SymbolRow(ANode: Integer; AParent: Pointer);
+  var
+    LRowPtr: Pointer;
+    LSymbol: TLspUnusedSymbol;
+    LIndex: Integer;
+  begin
+    NodeKind(ANode, LIndex);
+    LSymbol := GTab.Answer.Symbols[LIndex];
+    LRowPtr := LMessageServices.AddCustomMessage(NewSnippetRow(
+      LSymbol.FilePath, LSymbol.Row, LSymbol.Col, SnippetOf(LCache,
+      LSymbol.FilePath, LSymbol.Row), LSymbol.Col, LSymbol.Len, LSymbol.Kind,
+      LSymbol.TypeSpans), AParent);
+    GTab.RowNode.AddOrSetValue(LRowPtr, [ANode]);
+    for var LDoubt in LSymbol.Doubts do
+      Note(ANode, 'doubt: ', LDoubt, LRowPtr);
+  end;
+
+  procedure DeclarationsPart;
+  var
+    LTop: Pointer;
+  begin
+    if LSymbols = nil then
+      Exit;
+    LTop := PartRow('declarations', LSymbols);
+    if GTab.Answer.Skipped <> nil then
+      GTab.RowNode.AddOrSetValue(LMessageServices.AddCustomMessage(
+        NewNoteRow('not weighed: ', string.Join(', ', GTab.Answer.Skipped)),
+        LTop), LSymbols);
+    if not GTab.Options.Project then
+      for var LNode in LSymbols do
+        SymbolRow(LNode, LTop)
+    else
+      for var LFile in ByFile(LSymbols) do
+      begin
+        var LFileRow := FileRow(NodeFile(LFile[0]), LFile, LTop);
+        for var LNode in LFile do
+          SymbolRow(LNode, LFileRow);
+      end;
+  end;
+
+  // The unit's entries of ASection under AParent; nothing when none is left.
+  procedure UsesSection(const ASection: string; AParent: Pointer);
   var
     LNodes: TArray<Integer>;
-    LSectionCount: string;
+    LRow: Pointer;
   begin
     LNodes := nil;
-    for var LNode := 0 to NodeCount - 1 do
-      if not NodeRemoved(LNode) and
-         SameText(GTab.Answer.Entries[LNode].Section, ASection) then
+    for var LNode in LEntries do
+      if SameText(GTab.Answer.Entries[LNode].Section, ASection) then
         LNodes := LNodes + [LNode];
     if LNodes = nil then
       Exit;
-    LSectionCount := IntToStr(Length(LNodes));
-    LTop := LMessageServices.AddCustomMessagePtr(NewTitleRow(
-      ASection + ' (' + LSectionCount + ')', Length(ASection) + 3,
-      Length(LSectionCount)), LGroup);
-    GTab.RowNode.AddOrSetValue(LTop, LNodes);
-    GTab.TopNode := GTab.TopNode + [LNodes];
+    LRow := SectionRow(ASection, LNodes, AParent);
     for var LNode in LNodes do
-      EntryRow(GTab.Answer.Entries[LNode], LNode, LTop);
+      EntryRow(LNode, LRow);
+  end;
+
+  procedure UsesPart;
+  var
+    LTop: Pointer;
+  begin
+    if LEntries = nil then
+      Exit;
+    LTop := PartRow('units in uses', LEntries);
+    if not GTab.Options.Project then
+    begin
+      UsesSection('interface', LTop);
+      UsesSection('implementation', LTop);
+    end
+    else
+      for var LFile in ByFile(LEntries) do
+      begin
+        var LFileRow := FileRow(NodeFile(LFile[0]), LFile, LTop);
+        for var LNode in LFile do
+          EntryRow(LNode, LFileRow);
+      end;
+  end;
+
+  procedure NobodyPart;
+  var
+    LTop, LFileRow: Pointer;
+    LUnit: TLspUnreferencedEntry;
+  begin
+    if LUnits = nil then
+      Exit;
+    LTop := PartRow('units nobody uses', LUnits);
+    for var LNode in LUnits do
+    begin
+      NodeKind(LNode, LIdx);
+      LUnit := GTab.Answer.Units[LIdx];
+      LFileRow := FileRow(LUnit.FilePath, [LNode], LTop);
+      GTab.ShownNode := GTab.ShownNode + [LNode];
+      GTab.ShownRow := GTab.ShownRow + [LFileRow];
+      for var LDoubt in LUnit.Doubts do
+        Note(LNode, 'kept: ', LDoubt, LFileRow);
+      for var LBy in LUnit.ListedBy do
+        GTab.RowNode.AddOrSetValue(LMessageServices.AddCustomMessage(
+          NewSnippetRow(LBy.FilePath, LBy.Row, LBy.Col, SnippetOf(LCache,
+          LBy.FilePath, LBy.Row), LBy.Col, LBy.Len, '', LBy.TypeSpans),
+          LFileRow), [LNode]);
+    end;
+  end;
+
+  procedure AddPart(ASearched: Boolean; ACount: Integer; const AWhat: string);
+  begin
+    if not ASearched then
+      Exit;
+    if LParts <> '' then
+      LParts := LParts + ', ';
+    LParts := LParts + IntToStr(ACount) + ' ' + AWhat;
   end;
 
 begin
@@ -668,85 +841,53 @@ begin
   GTab.TopNode := [nil];
   GTab.ShownNode := nil;
   GTab.ShownRow := nil;
-  LShown := 0;
+  LEntries := nil;
+  LUnits := nil;
+  LSymbols := nil;
   LRemoved := 0;
   for var LNode := 0 to NodeCount - 1 do
     if NodeRemoved(LNode) then
       Inc(LRemoved)
-    else if GTab.Command <> uucProject then
-      Inc(LShown)
     else
-      for var LEntry in GTab.Answer.Entries do
-        if SameText(LEntry.FilePath, GTab.Files[LNode]) then
-          Inc(LShown);
+      case NodeKind(LNode, LIdx) of
+        nkEntry: LEntries := LEntries + [LNode];
+        nkUnit: LUnits := LUnits + [LNode];
+      else
+        LSymbols := LSymbols + [LNode];
+      end;
   LCache := TObjectDictionary<string, TStringList>.Create([doOwnsValues]);
   try
-    case GTab.Command of
-      uucUnit:
-        LTitle := 'Unused units in ' + ExtractFileName(GTab.TitleFile) + ': ';
-      uucProject:
-        LTitle := Format('Unused units in %s (%d units): ',
-          [ExtractFileName(GTab.Answer.ProjectFile), NodeCount - LRemoved]);
+    LParts := '';
+    AddPart(GTab.Options.Declarations, Length(LSymbols),
+      IfThen(Length(LSymbols) = 1, 'declaration', 'declarations'));
+    AddPart(GTab.Options.UsesEntries, Length(LEntries),
+      IfThen(Length(LEntries) = 1, 'unit in uses', 'units in uses'));
+    AddPart(GTab.Options.SearchesNobodyUses, Length(LUnits),
+      IfThen(Length(LUnits) = 1, 'unit nobody uses', 'units nobody uses'));
+    if GTab.Options.Project then
+      LTitle := 'Unused in ' + ExtractFileName(GTab.Answer.ProjectFile)
     else
-      LTitle := 'Units nobody uses in ' + ExtractFileName(GTab.Answer.ProjectFile) +
-        ': ';
-    end;
-    LCount := IntToStr(LShown);
-    LCountAt := Length(LTitle) + 1;
-    LTitle := LTitle + LCount;
+      LTitle := 'Unused in ' + ExtractFileName(GTab.TitleFile);
+    LTitle := LTitle + ': ' + LParts;
     if LRemoved > 0 then
-      LTitle := LTitle + Format(' - %d %s removed, Revert takes the last ' +
-        'Remove back', [LRemoved, IfThen(GTab.Command = uucProject, 'files',
-        'units')])
-    else if (LShown > 0) and (RemovableNodes = nil) then
-      LTitle := LTitle + ' - every one has a note, nothing to remove';
-    LMessageServices.AddCustomMessage(NewTitleRow(LTitle, LCountAt,
-      Length(LCount)), LGroup);
+      LTitle := LTitle + Format(' - %d removed, Revert takes the last ' +
+        'Remove back', [LRemoved]);
+    LMessageServices.AddCustomMessage(NewTitleRow(LTitle), LGroup);
 
-    if GTab.Command = uucUnit then
-    begin
-      SectionRows('interface');
-      SectionRows('implementation');
-    end
-    else
-      for var LNode := 0 to NodeCount - 1 do
-      begin
-        if NodeRemoved(LNode) then
-          Continue;
-        LTop := LMessageServices.AddCustomMessagePtr(NewFileNameRow(
-          NodeFile(LNode)), LGroup);
-        GTab.RowNode.AddOrSetValue(LTop, [LNode]);
-        GTab.TopNode := GTab.TopNode + [[LNode]];
-        GTab.ShownNode := GTab.ShownNode + [LNode];
-        GTab.ShownRow := GTab.ShownRow + [LTop];
-        if GTab.Command = uucNobody then
-        begin
-          for var LDoubt in GTab.Answer.Units[LNode].Doubts do
-            Note(LNode, 'kept: ', LDoubt, LTop);
-          for var LBy in GTab.Answer.Units[LNode].ListedBy do
-            // Under a header: the Pointer overload, which hands back the row.
-            GTab.RowNode.AddOrSetValue(LMessageServices.AddCustomMessage(
-              NewSnippetRow(LBy.FilePath, LBy.Row, LBy.Col, SnippetOf(LCache,
-              LBy.FilePath, LBy.Row), LBy.Col, LBy.Len, '', LBy.TypeSpans), LTop),
-              [LNode]);
-        end
-        else
-          for var LEntry in GTab.Answer.Entries do
-            if SameText(LEntry.FilePath, GTab.Files[LNode]) then
-              EntryRow(LEntry, LNode, LTop);
-      end;
+    DeclarationsPart;
+    UsesPart;
+    NobodyPart;
   finally
     LCache.Free;
   end;
   LMessageServices.ShowMessageView(LGroup);
-  LCommand := GTab.Command;
   ShowResultToolbar(GTab.Caption, [
     ResultToolButton('Remove', 'EditDeleteCommand',
-      procedure begin RemoveClick(LCommand) end),
+      procedure begin RemoveClick end),
     ResultToolButton('Remove All', 'EditDeleteCommand',
-      procedure begin RemoveAllClick(LCommand) end),
+      procedure begin RemoveAllClick end),
     ResultToolButton('Revert', 'EditUndoCommand',
-      procedure begin RevertClick(LCommand) end)]);
+      procedure begin RevertClick end)]);
   UpdateButtons;
 end;
 
@@ -867,6 +1008,7 @@ begin
   Result.Units := Copy(GTab.Answer.Units);
   for var LIdx := 0 to High(Result.Units) do
     Result.Units[LIdx].ListedBy := Copy(GTab.Answer.Units[LIdx].ListedBy);
+  Result.Symbols := Copy(GTab.Answer.Symbols);
 end;
 
 { The rows of GTab.Answer moved to where AEdits (one Remove, sorted, in the
@@ -891,6 +1033,12 @@ begin
             GTab.Answer.Units[LU].ListedBy[LB].Col,
             GTab.Answer.Units[LU].ListedBy[LB].Len, LEdit.Row, LEdit.Col,
             LEdit.OldText, LEdit.NewText);
+    // A declaration is never inside a uses clause: only shifted.
+    for var LS := 0 to High(GTab.Answer.Symbols) do
+      if SameText(GTab.Answer.Symbols[LS].FilePath, LEdit.FilePath) then
+        MapPosition(GTab.Answer.Symbols[LS].Row, GTab.Answer.Symbols[LS].Col,
+          GTab.Answer.Symbols[LS].Len, LEdit.Row, LEdit.Col, LEdit.OldText,
+          LEdit.NewText);
   end;
 end;
 
@@ -902,20 +1050,23 @@ begin
 end;
 
 { What ANodes' Remove asks pastree/usesRemoval for, and the units it takes
-  out of the project. Unused Units: the nodes that are removable entries.
-  Unused Units in the Project: the removable entries of each file.
-  Units Nobody Uses: every entry naming one of the units, except in the
-  program (RemoveFile edits that) and in a unit leaving the project too -
-  now or with an earlier Remove. }
+  out of the project. An entry: itself, when removable. A unit nobody uses:
+  every entry naming it, except in the program (RemoveFile edits that) and
+  in a unit leaving the project too - now or with an earlier Remove. An
+  entry in a unit leaving the project is left: the file goes. A name asked
+  twice in one file (an unused entry naming a unit nobody uses) is asked
+  once. A declaration has nothing to remove. }
 function RemovalFiles(const ANodes: TArray<Integer>;
   out AUnits: TArray<string>): TArray<TLspRemovalFile>;
 var
   LByFile: TDictionary<string, Integer>;   // lower-cased path -> index
   LGoing: TDictionary<string, Boolean>;
-  LAt: Integer;
+  LAt, LIdx: Integer;
 
   procedure Add(const APath, AName: string);
   begin
+    if LGoing.ContainsKey(LowerCase(APath)) then
+      Exit;
     if not LByFile.TryGetValue(LowerCase(APath), LAt) then
     begin
       LAt := Length(Result);
@@ -923,6 +1074,9 @@ var
       Result[LAt].FilePath := APath;
       LByFile.Add(LowerCase(APath), LAt);
     end;
+    for var LName in Result[LAt].Names do
+      if SameText(LName, AName) then
+        Exit;
     Result[LAt].Names := Result[LAt].Names + [AName];
   end;
 
@@ -932,35 +1086,26 @@ begin
   LByFile := TDictionary<string, Integer>.Create;
   LGoing := TDictionary<string, Boolean>.Create;
   try
-    if GTab.Command = uucUnit then
-    begin
-      for var LNode in ANodes do
-        if EntryRemovable(GTab.Answer.Entries[LNode]) then
-          Add(GTab.Answer.Entries[LNode].FilePath, GTab.Answer.Entries[LNode].UnitName);
-      Exit;
-    end;
-    if GTab.Command = uucProject then
-    begin
-      for var LNode in ANodes do
-        for var LEntry in GTab.Answer.Entries do
-          if SameText(LEntry.FilePath, GTab.Files[LNode]) and
-             EntryRemovable(LEntry) then
-            Add(LEntry.FilePath, LEntry.UnitName);
-      Exit;
-    end;
     for var LNode in ANodes do
-    begin
-      AUnits := AUnits + [GTab.Answer.Units[LNode].FilePath];
-      LGoing.AddOrSetValue(LowerCase(GTab.Answer.Units[LNode].FilePath), True);
-    end;
+      if NodeKind(LNode, LIdx) = nkUnit then
+      begin
+        AUnits := AUnits + [GTab.Answer.Units[LIdx].FilePath];
+        LGoing.AddOrSetValue(LowerCase(GTab.Answer.Units[LIdx].FilePath), True);
+      end;
     for var LRemoval in GTab.Removals do
       for var LPath in LRemoval.Units do
         LGoing.AddOrSetValue(LowerCase(LPath), True);
     for var LNode in ANodes do
-      for var LBy in GTab.Answer.Units[LNode].ListedBy do
-        if not LBy.IsProgram and
-           not LGoing.ContainsKey(LowerCase(LBy.FilePath)) then
-          Add(LBy.FilePath, GTab.Answer.Units[LNode].UnitName);
+      case NodeKind(LNode, LIdx) of
+        nkEntry:
+          if EntryRemovable(GTab.Answer.Entries[LIdx]) then
+            Add(GTab.Answer.Entries[LIdx].FilePath,
+              GTab.Answer.Entries[LIdx].UnitName);
+        nkUnit:
+          for var LBy in GTab.Answer.Units[LIdx].ListedBy do
+            if not LBy.IsProgram then
+              Add(LBy.FilePath, GTab.Answer.Units[LIdx].UnitName);
+      end;
   finally
     LGoing.Free;
     LByFile.Free;
@@ -1029,16 +1174,14 @@ end;
 procedure SelectNode(ANode: Integer);
 var
   LGeneration: Integer;
-  LCommand: TUnusedUnitsCommand;
 begin
   if (ANode < 0) or ResultSelectRow(ShownRowOf(ANode)) then
     Exit;
   LGeneration := GTab.Generation;
-  LCommand := GTab.Command;
   TThread.ForceQueue(nil,
     procedure
     begin
-      if UseTab(LCommand) and (LGeneration = GTab.Generation) and not
+      if UseTab and (LGeneration = GTab.Generation) and not
         ResultSelectRow(ShownRowOf(ANode)) then
         LspLogToServer('unused units: the row after the Remove could not be ' +
           'selected');
@@ -1104,9 +1247,14 @@ var
   LFiles: TArray<TLspRemovalFile>;
   LUnits: TArray<string>;
   LGeneration: Integer;
-  LCommand: TUnusedUnitsCommand;
+  LHasUnits: Boolean;
+  LIdx: Integer;
 begin
   LFiles := RemovalFiles(ANodes, LUnits);
+  LHasUnits := False;
+  for var LNode in ANodes do
+    if NodeKind(LNode, LIdx) = nkUnit then
+      LHasUnits := True;
   if LFiles = nil then
   begin
     // A unit only the program names: RemoveFile is all there is to do.
@@ -1116,12 +1264,11 @@ begin
   GTab.Busy := True;
   UpdateButtons;
   LGeneration := GTab.Generation;
-  LCommand := GTab.Command;
   LspUsesRemoval(GTab.TitleFile, LFiles,
     procedure(ASuccess: Boolean; const AAnswer: TLspUsesRemovalAnswer;
       const AError: string)
     begin
-      if not UseTab(LCommand) or (LGeneration <> GTab.Generation) then
+      if not UseTab or (LGeneration <> GTab.Generation) then
         Exit;
       GTab.Busy := False;
       try
@@ -1135,7 +1282,7 @@ begin
           LogDiagnostic('no longer in the uses: ' + LS);
         if AAnswer.Refused <> nil then
         begin
-          if GTab.Command <> uucNobody then
+          if not LHasUnits then
           begin
             // The clause changed since the search (a directive, a typo).
             UpdateButtons;
@@ -1193,11 +1340,12 @@ begin
     Length(Result)]));
 end;
 
-procedure RemoveClick(ACommand: TUnusedUnitsCommand);
+procedure RemoveClick;
 var
   LSelected, LNodes: TArray<Integer>;
+  LIdx: Integer;
 begin
-  if not UseTab(ACommand) or GTab.Busy then
+  if not UseTab or GTab.Busy then
     Exit;
   try
     LSelected := nil;
@@ -1215,12 +1363,13 @@ begin
     else if LNodes = nil then
     begin
       if Length(LSelected) = 1 then
-        TellUser(NodeName(LSelected[0]) + IfThen(GTab.Command = uucUnit,
-          ' has a note - it stays.', ' has a note on every row - nothing ' +
-          'to remove there.'), mtInformation)
+        TellUser(NodeName(LSelected[0]) + IfThen(NodeKind(LSelected[0],
+          LIdx) = nkSymbol, ' is a declaration - declarations are only ' +
+          'shown here, nothing removes them.', ' has a note - it stays.'),
+          mtInformation)
       else
-        TellUser('Every unit there has a note - nothing to remove.',
-          mtInformation);
+        TellUser('Nothing there can be removed: declarations are only ' +
+          'shown, and every unit has a note.', mtInformation);
     end
     else
       StartRemoval(LNodes);
@@ -1230,9 +1379,9 @@ begin
   end;
 end;
 
-procedure RemoveAllClick(ACommand: TUnusedUnitsCommand);
+procedure RemoveAllClick;
 begin
-  if not UseTab(ACommand) or GTab.Busy then
+  if not UseTab or GTab.Busy then
     Exit;
   try
     if RemovableNodes <> nil then
@@ -1244,14 +1393,14 @@ begin
   end;
 end;
 
-procedure RevertClick(ACommand: TUnusedUnitsCommand);
+procedure RevertClick;
 var
   LDisk: TArray<string>;
   LError: string;
   LProject: IOTAProject;
   LRemoval: TRemoval;
 begin
-  if not UseTab(ACommand) or GTab.Busy or (GTab.Removals = nil) then
+  if not UseTab or GTab.Busy or (GTab.Removals = nil) then
     Exit;
   try
     LRemoval := GTab.Removals[High(GTab.Removals)];
@@ -1300,98 +1449,236 @@ end;
 
 { -------- entry points -------- }
 
-procedure ExecuteUnusedUnits(ACommand: TUnusedUnitsCommand;
-  const AView: IOTAEditView);
-const
-  cWait: array[TUnusedUnitsCommand] of string = (
-    'Looking for unused units...',
-    'Looking for unused units in the project...',
-    'Looking for units nobody uses...');
+type
+  TUnusedStep = (usSymbols, usUses, usNobody);
+
 var
+  // A search under way: a second one waits for it (the menu stays enabled).
+  GSearching: Boolean;
+
+// AAnswer without the rows that have a doubt.
+function WithoutDoubts(const AAnswer: TLspUnusedAnswer): TLspUnusedAnswer;
+begin
+  Result := AAnswer;
+  Result.Entries := nil;
+  Result.Units := nil;
+  Result.Symbols := nil;
+  for var LEntry in AAnswer.Entries do
+    if LEntry.Doubts = nil then
+      Result.Entries := Result.Entries + [LEntry];
+  for var LUnit in AAnswer.Units do
+    if LUnit.Doubts = nil then
+      Result.Units := Result.Units + [LUnit];
+  SetLength(Result.Symbols, Length(AAnswer.Symbols));
+  var LCount := 0;
+  for var LSymbol in AAnswer.Symbols do
+    if LSymbol.Doubts = nil then
+    begin
+      Result.Symbols[LCount] := LSymbol;
+      Inc(LCount);
+    end;
+  SetLength(Result.Symbols, LCount);
+end;
+
+{ The search: the steps the options ask for, one request after the other,
+  the wait dialog saying which of how many runs (one progress for the whole
+  search - Alex, 2026-11-14). The answers are merged into one, and the tab
+  is built once the last is in. A failed step ends the search: a partial
+  tab would read as "nothing unused" where it was not looked for. Its state
+  is GSearch, not captured: a step's callback starts the next step. }
+const
+  cStepText: array[TUnusedStep] of string = ('unused declarations',
+    'unused units in uses clauses', 'units nobody uses');
+
+var
+  GSearch: record
+    FileName: string;
+    Options: TUnusedOptions;
+    Steps: TArray<TUnusedStep>;
+    Merged: TLspUnusedAnswer;
+    Start: UInt64;
+  end;
+
+procedure EndSearch(const AError: string);
+begin
+  GSearching := False;
+  GSearch.Merged := Default(TLspUnusedAnswer);
+  CloseWaitDialog;
+  LogDiagnostic(AError);
+end;
+
+procedure SearchStep(AStep: Integer); forward;
+
+procedure StepDone(AStep: Integer; ASuccess: Boolean;
+  const AAnswer: TLspUnusedAnswer; const AError: string);
+begin
+  if not GAlive then
+  begin
+    GSearching := False;
+    Exit;
+  end;
+  if not ASuccess then
+  begin
+    EndSearch(cStepText[GSearch.Steps[AStep]] + ': ' + AError);
+    Exit;
+  end;
+  try
+    GSearch.Merged.ProjectFile := AAnswer.ProjectFile;
+    case GSearch.Steps[AStep] of
+      usSymbols:
+        begin
+          GSearch.Merged.Symbols := AAnswer.Symbols;
+          GSearch.Merged.Skipped := AAnswer.Skipped;
+        end;
+      usUses: GSearch.Merged.Entries := AAnswer.Entries;
+      usNobody: GSearch.Merged.Units := AAnswer.Units;
+    end;
+    SearchStep(AStep + 1);
+  except
+    on E: Exception do
+      EndSearch(Format('unhandled %s: %s', [E.ClassName, E.Message]));
+  end;
+end;
+
+procedure ShowResults;
+var
+  LAnswer: TLspUnusedAnswer;
+  LOptions: TUnusedOptions;
   LFile: string;
+begin
+  LAnswer := GSearch.Merged;
+  LOptions := GSearch.Options;
+  LFile := GSearch.FileName;
+  GSearch.Merged := Default(TLspUnusedAnswer);
+  GSearching := False;
+  LspLogToServer(Format('unused: %s search, %d step(s) - %d ' +
+    'declarations, %d entries, %d units nobody uses, in %d ms',
+    [IfThen(LOptions.Project, 'project', 'unit'), Length(GSearch.Steps),
+    Length(LAnswer.Symbols), Length(LAnswer.Entries), Length(LAnswer.Units),
+    TThread.GetTickCount64 - GSearch.Start]));
+  if not LOptions.Doubts then
+    LAnswer := WithoutDoubts(LAnswer);
+  ReportUnderWaitDialog(Length(LAnswer.Entries) + Length(LAnswer.Units) +
+    Length(LAnswer.Symbols),
+    procedure
+    begin
+      if not UseTab then
+        Exit;
+      GTab.Clear;
+      GTab.Options := LOptions;
+      GTab.Answer := LAnswer;
+      GTab.TitleFile := LFile;
+      Report;
+      // A new search only: after a Remove or a Revert the selection
+      // (SelectNode) decides what is in view.
+      ResultScrollToTop;
+    end);
+end;
+
+procedure SearchStep(AStep: Integer);
+var
+  LScope: string;
   LDone: TLspUnusedProc;
 begin
+  if AStep > High(GSearch.Steps) then
+  begin
+    ShowResults;
+    Exit;
+  end;
+  UpdateWaitDialogWork(Format('Step %d of %d: %s', [AStep + 1,
+    Length(GSearch.Steps), cStepText[GSearch.Steps[AStep]]]));
+  LDone :=
+    procedure(ASuccess: Boolean; const AAnswer: TLspUnusedAnswer;
+      const AError: string)
+    begin
+      StepDone(AStep, ASuccess, AAnswer, AError);
+    end;
+  LScope := IfThen(GSearch.Options.Project, 'project', 'unit');
+  case GSearch.Steps[AStep] of
+    usSymbols: LspUnusedSymbols(LScope, GSearch.FileName, LDone);
+    usUses: LspUnusedUses(LScope, GSearch.FileName, LDone);
+    usNobody: LspUnreferencedUnits(GSearch.FileName, LDone);
+  end;
+end;
+
+procedure RunSearch(const AFile: string; const AOptions: TUnusedOptions);
+begin
+  GSearch.FileName := AFile;
+  GSearch.Options := AOptions;
+  GSearch.Steps := nil;
+  if AOptions.Declarations then
+    GSearch.Steps := GSearch.Steps + [usSymbols];
+  if AOptions.UsesEntries then
+    GSearch.Steps := GSearch.Steps + [usUses];
+  if AOptions.SearchesNobodyUses then
+    GSearch.Steps := GSearch.Steps + [usNobody];
+  if GSearch.Steps = nil then
+    Exit;
+  GSearch.Merged := Default(TLspUnusedAnswer);
+  GSearch.Start := TThread.GetTickCount64;
+  GSearching := True;
+  if AOptions.Project then
+    ShowWaitDialog('Looking for unused code in ' +
+      ExtractFileName(LspOwningProjectFile(AFile)) + '...')
+  else
+    ShowWaitDialog('Looking for unused code in ' + ExtractFileName(AFile) +
+      '...');
+  SearchStep(0);
+end;
+
+procedure ExecuteUnused(const AView: IOTAEditView);
+var
+  LFile: string;
+  LOptions: TUnusedOptions;
+begin
   try
-    if not Assigned(AView) or not Assigned(AView.Buffer) or
-       not UseTab(ACommand) then
+    if not Assigned(AView) or not Assigned(AView.Buffer) or not UseTab then
+      Exit;
+    if GSearching then
+    begin
+      TellUser('A search for unused code is still running.', mtInformation);
+      Exit;
+    end;
+    LFile := AView.Buffer.FileName;
+    if not ExecuteUnusedDialog(LFile, LspOwningProjectFile(LFile), LOptions)
+    then
       Exit;
     if GTab.Removals <> nil then
       if MessageDlg('The Removes made from the ' + GTab.Caption + ' tab ' +
         'can still be reverted there. A new search drops that. Search anyway?',
         mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
         Exit;
-    LFile := AView.Buffer.FileName;
-    ShowWaitDialog(cWait[ACommand]);
-    LDone :=
-      procedure(ASuccess: Boolean; const AAnswer: TLspUnusedAnswer;
-        const AError: string)
-      begin
-        if not GAlive then
-          Exit;
-        if not ASuccess then
-        begin
-          CloseWaitDialog;
-          LogDiagnostic(AError);
-          Exit;
-        end;
-        ReportUnderWaitDialog(Length(AAnswer.Entries) + Length(AAnswer.Units),
-          procedure
-          begin
-            if not UseTab(ACommand) then
-              Exit;
-            Inc(GTab.Generation);
-            GTab.Answer := AAnswer;
-            GTab.TitleFile := LFile;
-            GTab.Files := nil;
-            for var LIdx := 0 to High(AAnswer.Entries) do
-              if (LIdx = 0) or not SameText(AAnswer.Entries[LIdx].FilePath,
-                AAnswer.Entries[LIdx - 1].FilePath) then
-                GTab.Files := GTab.Files + [AAnswer.Entries[LIdx].FilePath];
-            GTab.Removals := nil;
-            GTab.Busy := False;
-            Report;
-            // A new search only: after a Remove or a Revert the selection
-            // (SelectNode) decides what is in view.
-            ResultScrollToTop;
-          end);
-      end;
-    case ACommand of
-      uucUnit: LspUnusedUses('unit', LFile, LDone);
-      uucProject: LspUnusedUses('project', LFile, LDone);
-      uucNobody: LspUnreferencedUnits(LFile, LDone);
-    end;
+    RunSearch(LFile, LOptions);
   except
     on E: Exception do
     begin
+      GSearching := False;
       CloseWaitDialog;
       LogDiagnostic(Format('unhandled %s: %s', [E.ClassName, E.Message]));
     end;
   end;
 end;
 
-// Every tab, its toolbar and its state - not GTab: this also runs once
-// GAlive is cleared, when UseTab no longer hands a tab out.
+// The tab, its toolbar and its state - also once GAlive is cleared, when
+// UseTab no longer hands the tab out.
 procedure DropGroups;
 var
   LMessageServices: IOTAMessageServices;
 begin
-  for var LTab in GTabs do
-  begin
-    if not Assigned(LTab) then
-      Continue;
-    HideResultToolbar(LTab.Caption);
-    if Assigned(LTab.Group) and not Application.Terminated and
-       Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
-      try
-        // Only while the tab is still there - see GetOrCreateMessageGroup.
-        if Assigned(LMessageServices.GetGroup(LTab.Caption)) then
-          LMessageServices.RemoveMessageGroup(
-            LMessageServices.GetGroup(LTab.Caption));
-      except
-        // Cosmetic cleanup; there is no panel left to report a failure to.
-      end;
-    LTab.Clear;
-  end;
+  if not Assigned(GTab) then
+    Exit;
+  HideResultToolbar(GTab.Caption);
+  if Assigned(GTab.Group) and not Application.Terminated and
+     Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
+    try
+      // Only while the tab is still there - see GetOrCreateMessageGroup.
+      if Assigned(LMessageServices.GetGroup(GTab.Caption)) then
+        LMessageServices.RemoveMessageGroup(
+          LMessageServices.GetGroup(GTab.Caption));
+    except
+      // Cosmetic cleanup; there is no panel left to report a failure to.
+    end;
+  GTab.Clear;
 end;
 
 procedure CloseUnusedUnitsResults;
@@ -1403,9 +1690,7 @@ procedure FinalizeUnusedUnits;
 begin
   GAlive := False;
   DropGroups;
-  GTab := nil;
-  for var LCommand := Low(TUnusedUnitsCommand) to High(TUnusedUnitsCommand) do
-    FreeAndNil(GTabs[LCommand]);
+  FreeAndNil(GTab);
 end;
 
 end.

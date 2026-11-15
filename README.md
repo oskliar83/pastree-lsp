@@ -46,7 +46,7 @@ the archive.
   before. Every answer is still the full analysis's: a library unit is
   analyzed in full when it is opened, and a request that needs library
   bodies - Find References, the Find All family, Find All Defines, rename,
-  Unused Units - makes them full first, with progress, through PasTree's
+  Unused... - makes them full first, with progress, through PasTree's
   workspace. `lightLibraries: false` turns it off - see [SPEC.md](SPEC.md),
   "Light libraries".
 
