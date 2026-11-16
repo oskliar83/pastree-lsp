@@ -615,6 +615,8 @@ type
     // unused X - it goes with them", "only assigned (...), never read"; ''
     // for one nothing uses.
     Why: string;
+    // Its kind of row made by rows: 'usedOnlyByUnused', 'onlyAssigned', ''.
+    How: string;
     TypeSpans: TArray<Integer>;
   end;
 
@@ -5469,6 +5471,7 @@ begin
         LSymbol.Kind := LObj.GetValue<string>('kind', '');
         LSymbol.Doubts := ReadStrings(LObj, 'doubts');
         LSymbol.Why := LObj.GetValue<string>('why', '');
+        LSymbol.How := LObj.GetValue<string>('how', '');
         LSymbol.TypeSpans := ReadIntArray(LObj, 'typeSpans');
         // Thousands of rows on a large project: grown by halves, not by one.
         if LSymbols = Length(Result.Symbols) then

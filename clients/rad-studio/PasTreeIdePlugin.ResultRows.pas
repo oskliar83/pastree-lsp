@@ -121,9 +121,13 @@ function NewSnippetRow(const AFilePath: string; ALine, ACol: Integer;
 /// <summary>
 /// A remark under a row - why an unused unit is kept, why it cannot be
 /// removed: ALeadIn ("kept: ") bold in the orange accent, AText italic in
-/// the panel's colour. Not navigable, like a header.
+/// the panel's colour. Not navigable, like a header - unless AFilePath
+/// names the place the remark speaks of ("assigned at Foo.pas:12"): then
+/// a double click jumps there, ALine/ACol 1-based (0.89.10, Alex).
 /// </summary>
-function NewNoteRow(const ALeadIn, AText: string): IOTACustomMessage;
+function NewNoteRow(const ALeadIn, AText: string;
+  const AFilePath: string = ''; ALine: Integer = 0;
+  ACol: Integer = 1): IOTACustomMessage;
 
 /// <summary>
 /// The colour a Find References row marks its match with - clMaroon, or the
@@ -1005,6 +1009,7 @@ type
     function GetChildCount: Integer;
     function GetChild(Index: Integer): IOTACustomMessage50;
     // IOTACustomMessage100
+    function Navigable: Boolean;
     function CanGotoSource(var DefaultHandling: Boolean): Boolean;
     procedure TrackSource(var DefaultHandling: Boolean);
     procedure GotoSource(var DefaultHandling: Boolean);
@@ -1068,8 +1073,15 @@ begin
   // the file for no reason (user, 2026-08-31). With navigation refused,
   // double-click on a header is left to the panel's own tree behavior -
   // expand/collapse - and F8 walks straight past to the next real site.
-  DefaultHandling := not (FIsHeader or FIsTitle or FIsNote);
-  Result := (FFilePath <> '') and not (FIsHeader or FIsTitle or FIsNote);
+  // A note with a place of its own (NewNoteRow's AFilePath) jumps too.
+  DefaultHandling := Navigable;
+  Result := (FFilePath <> '') and Navigable;
+end;
+
+function TResultRow.Navigable: Boolean;
+begin
+  Result := not (FIsHeader or FIsTitle) and
+    (not FIsNote or (FFilePath <> ''));
 end;
 
 { A row in a FORM FILE is not the IDE's jump: on a form that is not loaded
@@ -1080,7 +1092,7 @@ end;
   does not. }
 procedure TResultRow.TrackSource(var DefaultHandling: Boolean);
 begin
-  DefaultHandling := not (FIsHeader or FIsTitle or FIsNote);
+  DefaultHandling := Navigable;
   if DefaultHandling and
      ShowFormFileSite(FFilePath, FLine, FCol) then
     DefaultHandling := False;
@@ -1088,7 +1100,7 @@ end;
 
 procedure TResultRow.GotoSource(var DefaultHandling: Boolean);
 begin
-  DefaultHandling := not (FIsHeader or FIsTitle or FIsNote);
+  DefaultHandling := Navigable;
   if DefaultHandling and
      ShowFormFileSite(FFilePath, FLine, FCol) then
     DefaultHandling := False;
@@ -1386,7 +1398,8 @@ begin
   Result := LRow;
 end;
 
-function NewNoteRow(const ALeadIn, AText: string): IOTACustomMessage;
+function NewNoteRow(const ALeadIn, AText: string;
+  const AFilePath: string; ALine, ACol: Integer): IOTACustomMessage;
 var
   LRow: TResultRow;
 begin
@@ -1394,6 +1407,14 @@ begin
   LRow.FSuffix := ALeadIn;
   LRow.FText := AText;
   LRow.FIsNote := True;
+  if (AFilePath <> '') and (ALine > 0) then
+  begin
+    LRow.FFilePath := AFilePath;
+    LRow.FLine := ALine;
+    LRow.FCol := ACol;
+    if LRow.FCol < 1 then
+      LRow.FCol := 1;
+  end;
   Result := LRow;
 end;
 

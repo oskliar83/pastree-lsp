@@ -109,7 +109,7 @@ uses
   PasTreeIdePlugin.LspSession, PasTreeIdePlugin.LspDocuments,
   PasTreeIdePlugin.ResultRows, PasTreeIdePlugin.RenameToolbar,
   PasTreeIdePlugin.WaitDialog, PasTreeIdePlugin.FormModules,
-  PasTreeIdePlugin.UnusedForm;
+  PasTreeIdePlugin.UnusedForm, System.RegularExpressions;
 
 const
   // One tab for every part (Alex, 2026-11-14). Without the "PasTree " the
@@ -651,6 +651,70 @@ begin
   end;
 end;
 
+// A doubt in a few words (0.89.10, Alex): the server's sentence is for a
+// reader with no tree beside it (pastree-mcp's agents); here the row and
+// the place say the rest. The place is kept - a double click jumps there.
+// A sentence no rule knows is shown as it came.
+function ShortDoubt(const ADoubt: string): string;
+type
+  TRule = record
+    Pattern, Short: string;
+  end;
+const
+  cRules: array[0..11] of TRule = (
+    (Pattern: '^the value assigned at (\S+) is computed by code';
+     Short: 'assigned a computed value at $1'),
+    (Pattern: '^the name is written in a branch this configuration does not compile \(([^)]*)\)';
+     Short: 'named in inactive code at $1'),
+    (Pattern: '^the name is written where the index bound nothing \(([^)]*)\)';
+     Short: 'unresolved name at $1'),
+    (Pattern: '^a string literal spells it \(([^)]*)\)';
+     Short: 'named in a string at $1'),
+    (Pattern: '^a record''s field';
+     Short: 'record field - the record may be read whole'),
+    (Pattern: '^another overload of (\S+) is used';
+     Short: 'another overload is used'),
+    (Pattern: '^(\S+) declares (\S+) too';
+     Short: 'also declared in $1'),
+    (Pattern: '^a helper applies without being named';
+     Short: 'helper - applies without its name'),
+    (Pattern: '^a member of the helper (\S+),';
+     Short: 'member of unused helper $1'),
+    (Pattern: '^in the unnamed first section of a class.*form file \(([^)]*)\)';
+     Short: 'may be published - form $1'),
+    (Pattern: '^it holds an interface reference';
+     Short: 'holds an interface'),
+    (Pattern: '^(\S+), which uses it, has a doubt';
+     Short: 'used by doubtful $1'));
+var
+  LMatch: TMatch;
+begin
+  for var LRule in cRules do
+  begin
+    LMatch := TRegEx.Match(ADoubt, LRule.Pattern, [roIgnoreCase]);
+    if LMatch.Success then
+    begin
+      Result := LRule.Short;
+      for var LG := LMatch.Groups.Count - 1 downto 1 do
+        Result := Result.Replace('$' + IntToStr(LG),
+          LMatch.Groups[LG].Value);
+      Exit;
+    end;
+  end;
+  Result := ADoubt;
+end;
+
+// A row made by rows, in two or three words for the row's tag.
+function HowTag(const AHow: string): string;
+begin
+  if SameText(AHow, 'onlyAssigned') then
+    Result := 'only written'
+  else if SameText(AHow, 'usedOnlyByUnused') then
+    Result := 'used only by unused code'
+  else
+    Result := '';
+end;
+
 procedure Report;
 var
   LMessageServices: IOTAMessageServices;
@@ -660,12 +724,66 @@ var
   LEntries, LUnits, LSymbols: TArray<Integer>;
   LRemoved: Integer;
   LIdx: Integer;
+  LPaths: TDictionary<string, string>;  // Note's file names -> paths
 
-  procedure Note(ANode: Integer; const ALeadIn, AText: string;
-    AParent: Pointer);
+  // The full path of a file a note names by its name alone: one of the
+  // answer's files, else one of the project's modules; '' if none.
+  function PathOfName(const AName: string): string;
+  var
+    LProject: IOTAProject;
   begin
+    if LPaths = nil then
+    begin
+      LPaths := TDictionary<string, string>.Create;
+      for var LS in GTab.Answer.Symbols do
+        LPaths.AddOrSetValue(LowerCase(ExtractFileName(LS.FilePath)),
+          LS.FilePath);
+      for var LE in GTab.Answer.Entries do
+        LPaths.AddOrSetValue(LowerCase(ExtractFileName(LE.FilePath)),
+          LE.FilePath);
+      if GTab.Answer.ProjectFile <> '' then
+        LProject := ProjectByFile(GTab.Answer.ProjectFile)
+      else
+        LProject := ProjectByFile(LspOwningProjectFile(GTab.TitleFile));
+      if Assigned(LProject) then
+        for var LIdx := 0 to LProject.GetModuleCount - 1 do
+          if LProject.GetModule(LIdx).FileName <> '' then
+            LPaths.TryAdd(LowerCase(ExtractFileName(
+              LProject.GetModule(LIdx).FileName)),
+              LProject.GetModule(LIdx).FileName);
+    end;
+    if not LPaths.TryGetValue(LowerCase(AName), Result) then
+      Result := '';
+  end;
+
+  // A remark under a row. One that names a place - "assigned at
+  // Foo.pas:12", "only assigned (Foo.pas:12, Foo.pas:40)" - jumps to the
+  // first on a double click (Alex, 0.89.10), to AName on that line when
+  // it is there.
+  procedure Note(ANode: Integer; const ALeadIn, AText: string;
+    AParent: Pointer; const AName: string = '');
+  var
+    LMatch: TMatch;
+    LPath, LLine: string;
+    LRow, LCol: Integer;
+  begin
+    LPath := '';
+    LRow := 0;
+    LCol := 1;
+    LMatch := TRegEx.Match(AText,
+      '([A-Za-z0-9_.\-]+\.(?:pas|dpr|dpk|inc)):(\d+)', [roIgnoreCase]);
+    if LMatch.Success then
+    begin
+      LPath := PathOfName(LMatch.Groups[1].Value);
+      LRow := StrToIntDef(LMatch.Groups[2].Value, 0);
+      if (LPath <> '') and (AName <> '') then
+      begin
+        LLine := SnippetOf(LCache, LPath, LRow);
+        LCol := Pos(LowerCase(AName), LowerCase(LLine));
+      end;
+    end;
     GTab.RowNode.AddOrSetValue(LMessageServices.AddCustomMessage(NewNoteRow(
-      ALeadIn, AText), AParent), [ANode]);
+      ALeadIn, AText, LPath, LRow, LCol), AParent), [ANode]);
   end;
 
   // A top-level row "ACaption (N)" standing for ANodes.
@@ -729,18 +847,28 @@ var
     LRowPtr: Pointer;
     LSymbol: TLspUnusedSymbol;
     LIndex: Integer;
+    LName, LTag: string;
   begin
     NodeKind(ANode, LIndex);
     LSymbol := GTab.Answer.Symbols[LIndex];
+    // A row made by rows says so in its tag ("field, only written"); the
+    // sentence that explained it is gone - the doubts name the places
+    // (0.89.10, Alex).
+    LTag := LSymbol.Kind;
+    if HowTag(LSymbol.How) <> '' then
+      LTag := LTag + ', ' + HowTag(LSymbol.How);
     LRowPtr := LMessageServices.AddCustomMessage(NewSnippetRow(
       LSymbol.FilePath, LSymbol.Row, LSymbol.Col, SnippetOf(LCache,
-      LSymbol.FilePath, LSymbol.Row), LSymbol.Col, LSymbol.Len, LSymbol.Kind,
+      LSymbol.FilePath, LSymbol.Row), LSymbol.Col, LSymbol.Len, LTag,
       LSymbol.TypeSpans), AParent);
     GTab.RowNode.AddOrSetValue(LRowPtr, [ANode]);
-    if LSymbol.Why <> '' then
-      Note(ANode, '', LSymbol.Why, LRowPtr);
+    // The declared name, to put the caret on it at the place a note names.
+    LName := LSymbol.Name;
+    if Pos('<', LName) > 0 then
+      LName := Copy(LName, 1, Pos('<', LName) - 1);
+    LName := Copy(LName, LastDelimiter('.', LName) + 1, MaxInt);
     for var LDoubt in LSymbol.Doubts do
-      Note(ANode, 'doubt: ', LDoubt, LRowPtr);
+      Note(ANode, 'doubt: ', ShortDoubt(LDoubt), LRowPtr, LName);
   end;
 
   procedure DeclarationsPart;
@@ -853,6 +981,7 @@ begin
       else
         LSymbols := LSymbols + [LNode];
       end;
+  LPaths := nil;
   LCache := TObjectDictionary<string, TStringList>.Create([doOwnsValues]);
   try
     // The title names what was searched, no counts: each part's row below
@@ -870,6 +999,7 @@ begin
     UsesPart;
     NobodyPart;
   finally
+    LPaths.Free;
     LCache.Free;
   end;
   LMessageServices.ShowMessageView(LGroup);
