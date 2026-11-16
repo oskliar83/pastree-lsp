@@ -8938,11 +8938,12 @@ end;
 function TLspServer.HandleUnusedSymbols(const AMsg: TLspIncoming): string;
 const
   cSkipWord: array[TPasUnusedSkip] of string = ('published members',
-    'virtual, dynamic or message methods', 'interface members',
-    'methods an interface names', 'operators', 'class constructors',
+    'virtual, dynamic or message methods', 'dispinterface members',
+    'methods a library interface names', 'operators', 'class constructors',
     'attribute constructors', 'for-in methods', 'generated units',
     'units that replace a library unit',
-    'Register procedures of a package (the IDE calls them)');
+    'Register procedures of a package (the IDE calls them)',
+    'parameters of a routine whose signature is fixed');
 var
   LPath, LScope, LKind, LName, LSkipped: string;
   LMids: TArray<Integer>;

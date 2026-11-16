@@ -533,7 +533,12 @@ const
   /// (usPackageRegister, which cSkipWord names) - an older library lists it
   /// and every row only it reaches as unused - and a doubt carried down the
   /// whole chain of rows made by rows.
-  cMinPasTreeVersion = '0.203.0';
+  /// 0.204.0 (2026-11-16): an interface's methods and properties weighed -
+  /// rows of their own, and the class methods only own interfaces name rows
+  /// made by them; usSignature appended to TPasUnusedSkip (cSkipWord), and
+  /// usInterface / usImplements narrowed to dispinterfaces and library
+  /// interfaces.
+  cMinPasTreeVersion = '0.204.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
