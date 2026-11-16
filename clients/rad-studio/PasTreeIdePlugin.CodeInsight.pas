@@ -99,7 +99,7 @@ function PasTreeIsActiveInsightProvider: Boolean;
 /// CURRENT manager is per file and decided lazily, and it answered "not
 /// PasTree" at every tab switch (EditorViewActivated runs before the IDE
 /// has picked the new tab's manager) and all along on a project's .dpr
-/// (AVImark, 2026-10-23) - so the pane went empty on every switch and the
+/// (the client group, 2026-10-23) - so the pane went empty on every switch and the
 /// .dpr never got one. Sticky instead: True from the first time the current
 /// manager is ours or the IDE calls ManagerEnabled, False again only on
 /// ManagerDisabled, the IDE's word that the user chose another provider.
@@ -113,7 +113,7 @@ function PasTreeProviderSelected: Boolean;
 ///
 /// THROUGH THE ENVIRONMENT OPTION `InsightManager` (IOTAEnvironmentOptions.
 /// Values), the live switch DeclarationInformation and ErrorInsightLevel are
-/// flipped with. Measured on 37.0 (2026-10-13, AVImark): a string option
+/// flipped with. Measured on 37.0 (2026-10-13, the client group): a string option
 /// (tkLString) holding the selected manager's IDString - "Borland.CodeInsight.
 /// LSP.Pascal" for DelphiLSP. A write reads back at once and the IDE saves it
 /// at once; the IDE's CURRENT manager follows lazily, at the editor's next
@@ -1065,7 +1065,7 @@ begin
 end;
 
 { BY CONTAINMENT, NOT PREFIX - the native viewer's rule (Alex, 2026-10-13,
-  AVImark): "fas" lists faSysFile, but also iefFast, TIEFastDrawing and
+  the client group): "fas" lists faSysFile, but also iefFast, TIEFastDrawing and
   CC_FPFASTCALL. Until 0.68.0 this kept only the labels STARTING with the
   filter, so the list was a fraction of DelphiLSP's for the same text - the
   server sends every name in scope and never filtered; this did.
@@ -2762,7 +2762,7 @@ begin
   // DefaultDraw: the IDE's DefaultViewerDrawLine resolves the same index
   // through its own SymbolListAndSymbolFromIndex, which walks off the end of
   // its symbol-list TInterfaceList and raises "List index out of bounds"
-  // (Alex, 2026-10-15, AVImarkServer, arrowing through a 51-item member list
+  // (Alex, 2026-10-15, ClientServer, arrowing through a 51-item member list
   // - one request, no late answer). The viewer's row count can run ahead of
   // the list's for a paint, after a SetFilter shrank it; the next recount
   // removes the row.
@@ -3202,7 +3202,7 @@ const
   The project-source companion - PasTree for the name ".dproj"
 
   WHY IT EXISTS (read off coreide370 and proven with a probe manager on
-  AVImarkD37.dpk, 2026-10-24; local notes dpr-error-wipe.md). The IDE's
+  ClientD37.dpk, 2026-10-24; local notes dpr-error-wipe.md). The IDE's
   elision parser (ElisionParser.TElisionModule) asks after every edit
   (Modified -> RemoveErrors) and after every parse (ApplyErrors) whether the
   provider does Error Insight for the module - IInternalErrorInsight with the

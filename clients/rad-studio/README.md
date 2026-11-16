@@ -1110,7 +1110,7 @@ One line per session in the Build tab, naming the server, the PasTree it was
 built against, and the project it was started for:
 
 ```
-[pastree-lsp] server ready: pastree-lsp-server 0.6.2 (PasTree 0.2.4) for AVImark.dproj
+[pastree-lsp] server ready: pastree-lsp-server 0.6.2 (PasTree 0.2.4) for Client.dproj
 ```
 
 The project name is there because there is **one server per project

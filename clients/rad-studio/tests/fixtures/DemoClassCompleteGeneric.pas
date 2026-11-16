@@ -2,7 +2,7 @@ unit DemoClassCompleteGeneric;
 
 {
   Fixture for LspClientSmoke 5s: generic METHODS and default values with
-  brackets of their own (AVImark's TStripeService, 2026-10-09).
+  brackets of their own (the client group's TStripeService, 2026-10-09).
 
   Implemented already (must NOT be generated, nor declared a second time):
   the two generic methods of TGenHost. Their declarations carry constraints,

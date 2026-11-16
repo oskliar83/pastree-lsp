@@ -1279,7 +1279,7 @@ begin
   //   line above is the log's first, and it waits for initialize (the log
   //   path comes in it), so without this a slow start - the exe loading, a
   //   virus scan of a freshly built exe, a starved machine - cannot be told
-  //   from a client that sent initialize late (AVImark, 2026-10-01: 20 s
+  //   from a client that sent initialize late (the client group, 2026-10-01: 20 s
   //   between the restart and the first line, nothing to say where they
   //   went);
   // - the analysis threads.
@@ -1560,7 +1560,7 @@ begin
       + ' Set it at startup - see pastree-server.dpr and SPEC.md.');
   // AN $I INCLUDE IS NEVER A ROOT OR A PRIORITY FILE. AnalyzeStaged loads
   // every one of those as a unit, whether or not anything uses it, so an open
-  // include handed over became a unit of its own - `unit  <- AVIMARK.INC`,
+  // include handed over became a unit of its own - `unit  <- CLIENT.INC`,
   // E2029 on its first line - and from then on ModelIdOf knew it as one: its
   // edits re-ran that model, and the units that include it stayed stale
   // (2026-10-31). A priority include stands for the one unit including it;
@@ -1579,8 +1579,8 @@ begin
   // client sends every open buffer to every server of a group, every didOpen
   // before the first build names its file the priority (AffectsAnalysis is
   // True with no project), and the last one wins - on 2026-11-02 that was
-  // AVImarkCOMServer.dpr, a background tab of the group's COM server. Loaded
-  // as a unit of AVImark, it pulled its 9 in-process units in under AVImark's
+  // ClientCOMServer.dpr, a background tab of the group's COM server. Loaded
+  // as a unit of Client, it pulled its 9 in-process units in under Client's
   // search path, and the log showed 24 F1027 for units only the COM server's
   // path holds, in a project dcc builds clean. Only the main source and the
   // units the .dproj lists are known to belong; anything else waits for the
@@ -1620,8 +1620,8 @@ begin
   // A member after a dot that nothing resolves (`Grid.Canvas2`) is E2003 too.
   // PasTree leaves it off by default - a false E2003 on a member is worse
   // than a missing one - and without it the squiggles missed the most common
-  // typo there is (Alex, 2026-09-24, on AVImark). The library's own corpus
-  // runs, AVImark's 3767 units among them, report zero under the switch.
+  // typo there is (Alex, 2026-09-24, on the client group). The library's own corpus
+  // runs, the client group's 3767 units among them, report zero under the switch.
   // Carried by the project object, so the incremental CreateForModule path
   // below inherits it.
   FSession.SetReportUnresolvedMembers(True);
@@ -2154,8 +2154,8 @@ end;
   The RAD Studio client runs one server per project of a group and sends every
   open buffer to every server (see PasTreeIdePlugin.LspSession), because the
   client cannot know which project compiles a file: the .dproj lists some of
-  them, and the search path supplies the rest, silently. AVImarkServer
-  compiles uaviItem.pas that way while only AVImark.dproj lists it, and the
+  them, and the search path supplies the rest, silently. ClientServer
+  compiles uaviItem.pas that way while only Client.dproj lists it, and the
   two routing rules the client tried before this ("the listed owner", then
   "the listed owner or the active project") each left a real edit unseen by
   a server that compiled the file (2026-09-11).
@@ -2569,7 +2569,7 @@ end;
   PasTree 0.53.0) and nothing waits here. With the program open in a tab - the
   usual session - the edit fires EditorViewModified and goes out on the next
   idle tick, the unit's didOpen with the first-sight sync over a second later
-  (1.6 s in the first AVImark run, 2026-09-26): the program is analyzed with
+  (1.6 s in the first run on the client group, 2026-09-26): the program is analyzed with
   the unit a missing import (F1027), then the unit's buffer arrives. Nothing
   about the closure's documents changes at that point, so no signature shows
   it; this does.
@@ -3408,7 +3408,7 @@ end;
 { This process's memory and the system's remaining commit, in MB, for the two
   lines a memory question is asked of: "analysis done" (how much one closure
   costs on THIS machine) and "EXCEPTION in" (what was left when it failed).
-  Added after the 2026-09-22 AVImark report: two EOutOfMemory in one
+  Added after the 2026-09-22 report from the client group: two EOutOfMemory in one
   millisecond on different threads of a Win64 process on a 32 GB machine,
   and not one number anywhere in the log to say whether the process, the
   system, or a bogus allocation size was to blame. In a project group there
@@ -3763,7 +3763,7 @@ end;
   the overlay's business as before. Without it a list asked during the
   incremental rebuild that every keystroke starts was the overlay's own
   names and the builtins - 189 rows where the project gives 25,474 (Alex,
-  2026-10-19, AVImark: "short list right after opening, full on reopen").
+  2026-10-19, the client group: "short list right after opening, full on reopen").
   A module session takes a few hundred ms; past the budget the answer goes
   standalone, as it always did. False only for a cancel or a gone client. }
 function TLspServer.WaitHeldProject(const ARequestIdJson: string;
@@ -3835,7 +3835,7 @@ end;
   document opened AFTER the analysis finished with its text unchanged: no
   rebuild is due for it, so without this call it got no publish at all until
   the next edit anywhere - the error was in the log (every diagnostic of the
-  closure is) and never on screen (Alex, 2026-09-24, AVImark: the IDE opens
+  closure is) and never on screen (Alex, 2026-09-24, the client group: the IDE opens
   its tabs after the initial analysis has already published). }
 procedure TLspServer.PublishDiagnosticsFor(const ADoc: TLspDocument);
 var
@@ -6733,7 +6733,7 @@ end;
 
   WHY ASK RATHER THAN RESTART: the IDE re-saves the .dproj with every save of
   the .dpr, and the restart that followed cost a full analysis - 38 s on
-  AVImark under load, 2026-10-01, for a space typed and deleted in the .dpr.
+  the client group under load, 2026-10-01, for a space typed and deleted in the .dpr.
   Re-reading the .dproj costs about a second and blocks only this server.
 
   NOT A RECONFIGURE. A changed configuration still goes through a restart:
@@ -6811,7 +6811,7 @@ end;
     asks every project of a group for this to build its Group tab.
 
   THE ANSWER IS A TABLE, NOT ONE OBJECT PER ROW. The project list of a real
-  project is 100k+ rows (AVImark: 113,613), and spelled out as objects it was
+  project is 100k+ rows (the client group: 113,613), and spelled out as objects it was
   33 MB that the client's System.JSON took two seconds to read on a fast
   machine. Most of a row is a repeated value - a dozen kind and head words, a
   few hundred owners, one file per unit - so those are interned once, in
@@ -8314,7 +8314,7 @@ var
   LStart: UInt64;
 
   { ONE LOOKUP PER ROW. The first cut compared every row with every uses
-    item under every unit-scope prefix - on AVImark.dpr that is 1554 rows x
+    item under every unit-scope prefix - on Client.dpr that is 1554 rows x
     1556 items x a dozen prefixes, 30 million SameText calls on concatenated
     strings: 1.7 s for the project list, 6 s for the closure (2026-09-25).
     The keys are built once instead: every item's name, lower-cased, as

@@ -120,7 +120,7 @@ begin
   // and a wait dialog that opens and closes inside one blink is only a
   // flash (Alex, 2026-09-21). A cold project still gets it, which is what
   // it was put here for. 250 ms is Alex's number, set after trying 400:
-  // AVImark warm is 65 ms end to end and a cold one takes seconds, so
+  // the client group warm is 65 ms end to end and a cold one takes seconds, so
   // nothing real lands near the boundary and the shorter delay only means
   // the dialog appears sooner in the case that needs it.
   ShowWaitDialogAfter(cWaitDialogDelayMs,

@@ -34,7 +34,7 @@ Before suspecting the search path, check whether the units carrying the
 F1027 belong to this project at all. Find who names the reported unit's
 importer: if only ANOTHER project of the group does (its `.dpr` lists it),
 the closure took in a file it should not have. On 2026-11-02 that was 24
-F1027 on AVImark, every one in a unit of the group's COM server, whose
+F1027 on the client group, every one in a unit of the group's COM server, whose
 `.dpr` was the last buffer opened before the first build and became its
 priority file - and a priority file is loaded whether anything uses it or
 not. Fixed in 0.76.14 (`StartAnalysis`: before there is a closure only the
@@ -168,7 +168,7 @@ parsing mode costs one slower analysis instead.
 
 Before 0.46.0 this was NOT the analysis - the project list comes off the
 retained symbol tables (`TPasNavigator.ProjectOutline`) and cost ~70 ms even
-on AVImark (1553 units, 113,613 rows). The delay was the ANSWER's SIZE: one
+on the client group (1553 units, 113,613 rows). The delay was the ANSWER's SIZE: one
 JSON object per row was 33 MB on the wire, and the client spent 1.5 s in
 `TJSONObject.ParseJSONValue` plus per-field `GetValue<T>` on the main thread,
 then another ~900 ms in `MeasureHeadColumn` doing one GDI `TextWidth` PER
@@ -199,7 +199,7 @@ repeat. If it is slow again on 0.46.0+:
   `.dproj` and prints the same breakdown warm/cold, DOM path vs raw path.
 
 Not yet done, noted for when it is needed: a library-wide scope (RTL/VCL/
-third-party, 400k+ rows in a project like AVImark) was judged too big to ship
+third-party, 400k+ rows in a project like the client group) was judged too big to ship
 as a full list even in the table format: `pastree/outline` would need
 `filter`/`limit` parameters and server-side filtering per keystroke instead.
 
@@ -230,7 +230,7 @@ address it and all three must stay:
   a `Supports(BorlandIDEServices, ...)` and a row asks for six of them.
 
 If it flickers again, look for a new per-row call into the VCL or ToolsAPI
-before looking anywhere else - the same mistake cost 5.7 s on AVImark on
+before looking anywhere else - the same mistake cost 5.7 s on the client group on
 2026-09-19 and is recorded in `MeasureHeadColumn`'s header.
 
 **A tab switch flickers on a big list.** Get the `goto tab` timing line

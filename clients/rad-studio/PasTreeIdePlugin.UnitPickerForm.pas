@@ -11,7 +11,7 @@ unit PasTreeIdePlugin.UnitPickerForm;
   WHY IT EXISTS AT ALL. The IDE's own two dialogs list the units the .dproj
   names and nothing else (Find Unit adds .dcu files on the Library Path). A
   unit the project reaches implicitly - through the search path and a uses
-  chain - is in neither, and in a project like AVImark that is most of the
+  chain - is in neither, and in a project like the client group that is most of the
   code. The server knows that set exactly: it is the closure it analyzed.
   The "Implicit Units" box is the demo's, and it switches between the two.
 
@@ -471,7 +471,7 @@ end;
 
 { Use Unit's marks: what the file is and which units it already uses, read
   by the server from the LIVE buffer (a parse, no analysis - answered in
-  tens of milliseconds on AVImark, unless the server is busy finishing an
+  tens of milliseconds on the client group, unless the server is busy finishing an
   analysis, when it waits in the queue behind it). }
 procedure TPasTreeUnitPickerForm.AskDoc;
 var
@@ -665,7 +665,7 @@ begin
     // A .dpr names every unit of its project in its uses, so without the
     // implicit units there is nothing left to add - say that, rather than a
     // bare "0 units" over an empty list that reads as broken (Alex,
-    // 2026-09-25, Alt+F11 in AVImark.dpr).
+    // 2026-09-25, Alt+F11 in Client.dpr).
     LText := 'Every project unit is already used here - tick Implicit Units'
   else if Length(FShown) = Length(FAll) then
     LText := Format('%d units', [Length(FAll)])

@@ -253,7 +253,7 @@ end;
   paths come back from file URIs with the drive in lower case
   ("c:\Repos\...\Medhist.PAS" against the IDE's "C:\Repos\..."): handed
   the session's path, it found nothing, and every push after the first
-  analysis was lost (AVImark, 2026-10-23 - the errors showed only through the
+  analysis was lost (the client group, 2026-10-23 - the errors showed only through the
   pull, at the next start). }
 function IdeBufferName(const APath: string): string;
 var
@@ -302,7 +302,7 @@ begin
 end;
 
 { A DIAGNOSTIC, for the project source whose marks the IDE wipes right after
-  our push (AVImark.dpr, 2026-10-23; units are fine): when the IDE's current
+  our push (Client.dpr, 2026-10-23; units are fine): when the IDE's current
   manager for the top buffer is not ours, its parse hooks remove our marks
   (it does not answer IInternalSupportErrorInsight). Says once per file
   which manager that is and what the buffer's module is called - a project's
@@ -345,7 +345,7 @@ end;
   this buffer's errors and sends the status bar its count. 0.75.1 pushed
   every file the server published for with True, so the clean
   dmAVIDatabase.pas published after Medhist.PAS emptied the folder the
-  moment Medhist had filled it (AVImark, 2026-10-23). DelphiLSP passes True
+  moment Medhist had filled it (the client group, 2026-10-23). DelphiLSP passes True
   for the active module alone; so do we - the editor's top buffer - and the
   others get their marks only. A tab switch re-pushes the new top buffer
   (EditorViewActivated), so the folder follows the editor.

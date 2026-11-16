@@ -161,8 +161,8 @@ end;
   and the span covers that. Pairing either span with any other text is a
   highlight on the wrong characters - first against a name-prefixed line
   (the underline sat on "{$DEFIN"), then against the main module's own
-  `program AVImark;`, which a 10-character MSWINDOWS span turned into
-  "program A".
+  `program ClientApp;`, which a 10-character MSWINDOWS span turned into
+  "program C".
 
   So the line is never re-read locally. Find References has to read one -
   an LSP Location carries no text at all - but these rows arrive with

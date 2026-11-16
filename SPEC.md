@@ -826,13 +826,13 @@ yet. Until then the didOpen of a unit with no file forced a full rebuild -
   first-sight sync; the program's didChange comes with it only when the
   program has no editor view. Open in a tab - the usual session - the program's
   edit fires EditorViewModified and goes out on the idle tick, over a second
-  EARLIER (1.6 s in the first AVImark run, 2026-09-26), so the program is
+  EARLIER (1.6 s in the first run on the client group, 2026-09-26), so the program is
   analyzed with the unit a missing import (F1027) before the unit's buffer
   exists. When it arrives no document of the closure changes, so the signature
   shows nothing; the unit waits in `FTakeIn` (armed by its didOpen) until
   `TakeInNamer` finds the program that names it without having it, and the
   program is re-run (`analysis started: incremental, one module (<dpr>) to
-  take in <unit>`) - 62 + 63 ms on AVImark, against the ~5 s rebuild it
+  take in <unit>`) - 62 + 63 ms on the client group, against the ~5 s rebuild it
   replaces. Consumed when that run starts and cleared by every full rebuild,
   so a unit that cannot be taken in is never retried in a loop.
 - **The built parts are cut AFTER the run**, against the closure it produced
@@ -852,7 +852,7 @@ model, and "is this document one of ours" (`AffectsAnalysis`) asked
 `ModelIdOf` alone, so an edited include was "outside this closure: kept as an
 overlay", a saved one was skipped by the file watcher, and the units including
 it stayed stale until something else rebuilt - in the client project,
-`AVIMARK.INC`, which 1301 units include. A file now counts when a model's file
+`CLIENT.INC`, which 1301 units include. A file now counts when a model's file
 table (`Tree.Source.FileNames`: the unit's own file, then every include it
 read) holds it, and the one changed document resolves to its unit:
 
@@ -876,7 +876,7 @@ one unit a module run re-read (0.3 ms), never a walk per keystroke.
 **An include is never a root or a priority file.** `AnalyzeStaged` loads both
 as units whether or not anything uses them, and the IDE opens its tabs before
 the first analysis: the include opened last became a unit of its own (`unit
-<- AVIMARK.INC`, E2029 `unit, program, library or package expected` published
+<- CLIENT.INC`, E2029 `unit, program, library or package expected` published
 to its tab), `ModelIdOf` knew it from then on, and its edits re-ran that model
 instead of the units including it. A priority include stands for its one
 includer (for none with several); with no project to ask yet, an `.inc` file

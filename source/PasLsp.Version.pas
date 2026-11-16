@@ -214,9 +214,9 @@ const
   /// arguments is typed - `Node.GetData<T>` with no parentheses, and
   /// `GetData<T>()` beside a plain `GetData()`. Silent without it: an inline
   /// var from such a call has no type, and every member behind it answers
-  /// `did not resolve to a source declaration` (AVImark, VirtualTreeView's
+  /// `did not resolve to a source declaration` (the client group, VirtualTreeView's
   /// TVirtualNode.GetData<T>).
-  /// 0.50.2 (2026-09-25): three fixes pastree-mcp found on AVImark. Find
+  /// 0.50.2 (2026-09-25): three fixes pastree-mcp found on the client group. Find
   /// Destructions no longer reads the token array of a text-demoted unit -
   /// an access violation here since 0.53.0 demotes library text after every
   /// build. `TFoo.Create(...)` inside TFoo's own unit binds TFoo's
@@ -237,7 +237,7 @@ const
   /// with new-dependency. The server leans on it: the didOpen of a unit with
   /// no file no longer forces a rebuild, the program's incremental run brings
   /// the unit in. Silent without it: every new unit costs a full rebuild
-  /// again (4-5 s on AVImark), with every answer still right.
+  /// again (4-5 s on the client group), with every answer still right.
   /// 0.56.0 (2026-09-27): PlanRename takes a type's name in every
   /// implementation header it qualifies (`procedure TFoo.Bar;`), and
   /// FindReferences' AImplHeaders serves context.includeImplementationHeaders.
@@ -280,7 +280,7 @@ const
   /// Vcl.ToolWin and the like, a save undoes the Remove and Revert refuses.
   /// 0.93.4: the same for a component of a form the form INHERITS - one
   /// its own form file does not name (Orpheus state components on a
-  /// third-level base form of AVImark's dialogs).
+  /// third-level base form of the client group's dialogs).
   /// 0.93.12 (2026-10-07): a for-in element over an array constructor
   /// (`['.pas', '.inc']`) or a `+` of collections (`[LDir] + APaths`) has
   /// a type. Against 0.93.11 the hover shows `var LPath` with none.

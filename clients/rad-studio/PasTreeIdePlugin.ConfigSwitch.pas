@@ -9,7 +9,7 @@ unit PasTreeIdePlugin.ConfigSwitch;
   gate in front of a REQUEST, compared them, and everything painted without a
   request - the inactive-code grey, the squiggles, the type colouring, the
   status panel - showed the other configuration's view until the next
-  Ctrl+Click (AVImark, 2026-10-15: Debug -> Release -> Debug in the IDE, the
+  Ctrl+Click (the client group, 2026-10-15: Debug -> Release -> Debug in the IDE, the
   server on Debug throughout and nothing saying so).
 
   ToolsAPI has no event for an active configuration or platform change, so a
@@ -18,7 +18,7 @@ unit PasTreeIdePlugin.ConfigSwitch;
   restarts once, for the last one, and a switch straight back restarts
   nothing.
   Each restart is a full analysis on a process with no parse donor (5.8 s on
-  AVImark), so the rule is worth its harness.
+  the client group), so the rule is worth its harness.
 
   Pure string and number work - no ToolsAPI - so LspTextSmoke holds it to
   cases.

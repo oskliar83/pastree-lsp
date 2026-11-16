@@ -57,7 +57,7 @@ procedure TimingLogFmt(const AFormat: string; const AArgs: array of const);
 /// for the few lines that must reach the file even with advanced logging
 /// off. The one so far is "server connection lost": the server that could
 /// have logged its own death is the thing that just died, and on 2026-09-22
-/// an AVImark log showed a fresh server start with nothing at all between it
+/// a log from the client group showed a fresh server start with nothing at all between it
 /// and the previous one's last quiet line, so the death itself was invisible.
 /// </summary>
 procedure AppendIdeLogLine(const APath, ALine: string);

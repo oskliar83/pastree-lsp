@@ -583,7 +583,7 @@ end;
   refilters inside the switch.
 
   A refilter always repaints, whether or not the count changed: the filter
-  `actio` and the filter `action` select the same 4387 rows of AVImark, and
+  `actio` and the filter `action` select the same 4387 rows of the client group, and
   the TListBox this control replaced decided by its count, selection and
   top row alone whether WM_SETREDRAW(1) was worth a repaint - so after the
   `n` it kept showing the old rows with the old five-letter match (Alex,
@@ -705,7 +705,7 @@ begin
   // rows - `implementation` would otherwise set the column's width alone.
   //
   // The unit and section columns the same way. The loop body is what a
-  // project list of a million rows (AVImark with the library) runs once per
+  // project list of a million rows (the client group with the library) runs once per
   // row, so NOTHING in it allocates: a first cut that built a `'unit:' +
   // Name` key and a SectionColumn string per row made the project tab take
   // seconds to open (Alex, 2026-09-19: "wild lag"). A row's UnitName is
@@ -716,7 +716,7 @@ begin
   // have are measured for each new one - a column a few pixels wider than
   // strictly needed beats a string per row. And no Scope in the loop: it
   // reads tcScope.TabIndex, a SendMessage to the tab control, 47 us a row
-  // - 5.7 s over the AVImark list, traced 2026-09-19 with the same cost
+  // - 5.7 s over the client group's list, traced 2026-09-19 with the same cost
   // per row on the module tab. The unit width is zero on the module tab,
   // whose rows draw no unit (lbItemsDrawItem).
   FWidths[AScope] := Default(TGoToWidths);
@@ -1274,7 +1274,7 @@ procedure TPasTreeGoToForm.lbItemsDrawItem(AList: TPasTreeListBox; ACanvas: TCan
   text again after drawing it (TCanvas.TextOut ends in MoveTo(X +
   TextWidth)), and our own TextWidth to advance - three GDI text calls and
   a font reselection per run, ~10 ms for a screen of twenty rows on
-  AVImark (2026-09-21). Here the DC holds one of two fonts made in
+  the client group (2026-09-21). Here the DC holds one of two fonts made in
   PrepareRowPainter, the text colour is a SetTextColor, the alignment is
   TA_UPDATECP so ExtTextOut advances the position itself, and a
   right-aligned column is TA_RIGHT at its edge - no measuring anywhere.

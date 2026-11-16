@@ -461,7 +461,7 @@ end;
   usually does not (`function TStripeService.RetrieveStripeObject<T>(...)`),
   so a key built from the text as written made every such method look
   unimplemented AND its body look undeclared - one press added a second
-  declaration and a second body (AVImark, 2026-10-09). Constraints are not
+  declaration and a second body (the client group, 2026-10-09). Constraints are not
   part of the identity, and they are not written in an implementation's
   header, so a generated one drops them too. The parameters themselves stay:
   `Foo<T>` and `Foo<T, U>` are different overloads.
@@ -608,7 +608,7 @@ end;
 
   A default ends only at the depth it started at. A set or open-array default
   has brackets and commas of its own - `const A: TArray<string> = []` - and
-  ending the skip at ANY `]` wrote `const A: TArray<string>]` (AVImark's
+  ending the skip at ANY `]` wrote `const A: TArray<string>]` (the client group's
   TStripeService, 2026-10-09); `= [1, 2]` would have resumed at its comma. }
 function StripDefaults(const AText: string): string;
 var

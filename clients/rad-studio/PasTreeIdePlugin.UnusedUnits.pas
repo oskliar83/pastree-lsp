@@ -59,7 +59,7 @@ unit PasTreeIdePlugin.UnusedUnits;
   project (IOTAProject.RemoveFile - which edits the .dpr's own uses), and
   the project is saved. A removed node leaves the tree; the rows left - the
   declarations too - are moved to the lines the edits left them on
-  (MoveRows - on AVImark every row under a removed interface clause pointed
+  (MoveRows - on the client group every row under a removed interface clause pointed
   lines too low, 2026-10-06), and Revert puts back the positions it took.
   The tab is rebuilt (the ToolsAPI has no way to drop one row), and the
   selection is put on the node after the removed ones (SelectNode).

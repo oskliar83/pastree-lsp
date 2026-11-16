@@ -29,7 +29,7 @@ unit PasLsp.UnusedUnits;
   row.
 
   A DIRECTIVE IS NEVER DROPPED. Before 0.62.1 any `{$` in a clause refused
-  every entry of it - on AVImark (2026-10-06) that was every row of the
+  every entry of it - on the client group (2026-10-06) that was every row of the
   Unused Units tab, `{$IFDEF}`s in `uses` being the norm there. What is
   dropped is now checked instead: the layout cut above when it holds no
   directive, else each removed entry goes with a comma of its own next to

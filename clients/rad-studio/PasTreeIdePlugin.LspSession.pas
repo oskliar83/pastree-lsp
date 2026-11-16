@@ -1670,7 +1670,7 @@ type
     //
     // A NEW STAMP IS A QUESTION, NOT A RESTART (0.61.0). The IDE re-saves the
     // .dproj with every save of the .dpr, and a restart per .dpr save cost a
-    // full analysis each time - 38 s on AVImark, 2026-10-01, for a space typed
+    // full analysis each time - 38 s on the client group, 2026-10-01, for a space typed
     // and deleted. So a new stamp sends pastree/projectChanged (CheckSaved),
     // the server re-reads the .dproj and compares, and only a changed
     // configuration restarts: FRestartWhy set, then EnsureSession again.
@@ -3092,12 +3092,12 @@ begin
       end);
     { EVERY OPEN BUFFER, TO EVERY SERVER. The client cannot tell which
       projects compile a file: the .dproj lists some of a project's units and
-      the search path supplies the rest, silently. AVImarkServer compiles
-      uaviItem.pas that way while only AVImark.dproj lists it, and two
+      the search path supplies the rest, silently. ClientServer compiles
+      uaviItem.pas that way while only Client.dproj lists it, and two
       routing rules tried here - "the .dproj that lists the file" (0.31.1),
       then "that, or the active project" (0.38.2) - each left an edit unseen
       by a server that compiled the file: with the second, an edit to
-      uaviItem made from AVImark never reached AVImarkServer, and navigation
+      uaviItem made from Client never reached ClientServer, and navigation
       from frmImport (its own unit) into uaviItem answered from stale text
       (2026-09-11). Only the server knows its closure, so the server filters:
       a buffer outside it is kept as an overlay and schedules nothing (see
@@ -3119,7 +3119,7 @@ begin
     // with the next request only, and until they did it published no
     // diagnostics, so nothing asked for the new semantic tokens: after a
     // configuration switch the inactive-code grey stayed the old
-    // configuration's until a tab switch made a request (AVImark,
+    // configuration's until a tab switch made a request (the client group,
     // 2026-11-02: didOpen 32 s after "server ready"). The opens go out
     // before the server's first rebuild, which then publishes for each, and
     // the tokens follow. After a crash restart Sync finds the set current and

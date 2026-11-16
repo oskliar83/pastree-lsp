@@ -202,7 +202,7 @@ function EditorMarkedBlockColors(out AFore, ABack: TColor): Boolean;
 /// the text a second time after drawing it (MoveTo(X + TextWidth)), and
 /// with the caller's own TextWidth that was three GDI text calls per run
 /// where one does (the Go To picker, 2026-09-21: ~10 ms for a screen of
-/// twenty rows on AVImark).
+/// twenty rows on the client group).
 /// </summary>
 procedure PaintSyntaxTextDC(ADC: HDC; const AText: string; ADefault: TColor;
   AForceColor: TColor = clNone; const ATypeSpans: TArray<Integer> = nil;

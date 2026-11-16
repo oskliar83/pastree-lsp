@@ -1568,7 +1568,7 @@ begin
   ClearActivity;
   // Into the log file too (Log does that): without this line a log shows a
   // fresh server start with nothing between it and the previous one's last
-  // quiet line, and the death is invisible (AVImark report, 2026-09-22).
+  // quiet line, and the death is invisible (report from the client group, 2026-09-22).
   Log(Format('server connection lost: %s (stderr: %s) - the next request'
     + ' starts a new server', [AReason, StdErrWhere]));
   FOutbox.Clear;

@@ -4,7 +4,7 @@ unit PasTreeIdePlugin.OutlineRows;
   server sends them as.
 
   WHY A TABLE AND A HAND-WRITTEN READER, NOT System.JSON OBJECTS. The project
-  list of a real project is big: AVImark (1553 units) is 113,613 rows. As one
+  list of a real project is big: the client group (1553 units) is 113,613 rows. As one
   JSON object per row with every field spelled out - the shape up to 0.45.3 -
   that was 33.3 MB on the wire, and the client spent 0.5 s in
   TJSONObject.ParseJSONValue and another 1.5 s pulling fourteen GetValue<T>

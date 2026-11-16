@@ -21,7 +21,7 @@ unit PasTreeIdePlugin.UnitPicker;
   THE LISTS. The PROJECT list is the IDE's own (IOTAProject modules plus the
   main source), so the dialog opens with no request in front of it - a
   request would wait in the server's queue behind any analysis in flight,
-  which after opening AVImark is seconds (Alex, 2026-09-25). What needs the
+  which after opening the client group is seconds (Alex, 2026-09-25). What needs the
   server is asked by the dialog and lands while it is up: Use Unit's marks
   (pastree/units, scope project, which also says what the file is) and the
   implicit units (scope closure), both of the server owning the file.
@@ -156,7 +156,7 @@ end;
   needs no server: this is what lets the dialog open at once even while the
   server is still finishing an analysis, when any request would wait in the
   queue behind it (Alex, 2026-09-25: the first View Unit after opening
-  AVImark took as long as the rest of the initial analysis). }
+  the client group took as long as the rest of the initial analysis). }
 procedure AddProjectRows(const AProject: IOTAProject;
   var ARows: TArray<TLspUnitRow>);
 var

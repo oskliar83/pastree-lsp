@@ -450,7 +450,7 @@ begin
   // ANOTHER PROJECT'S PROGRAM OPEN BEFORE THE FIRST BUILD (0.76.14). The IDE
   // sends every open buffer of a group to every server, and before the first
   // build each didOpen named its file the priority, which is loaded as a unit
-  // whether or not anything uses it: AVImark's server took the group's COM
+  // whether or not anything uses it: the client group's server took the group's COM
   // server .dpr in and logged 24 F1027 in a project dcc builds clean. Light
   // pass only - the full pass keeps proving that the project alone, with
   // nothing open, starts the build. DemoApp's units are all fixtures, and

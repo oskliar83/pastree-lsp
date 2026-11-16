@@ -733,7 +733,7 @@ begin
         // and so does a member whose type is not in the pane (its type sits
         // in an include, or is named differently). TryGetValue sets its out
         // parameter to nil on a miss, so never hand it LParent itself: that
-        // was an access violation on AVImark (2026-10-24).
+        // was an access violation on the client group (2026-10-24).
         LParent := LSection;
         if (LRow.Owner <> '') and not LRow.IsImpl
           and LTypes.TryGetValue(LowerCase(LRow.Owner), LNode) then

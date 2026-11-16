@@ -381,7 +381,7 @@ begin
             // behind `=` rather than a colon: anything after the type is not
             // a name. Missing that turned `AVisible: Boolean = True;
             // ACacheable: ...` into the names AVisible, True, ACacheable and
-            // wrote `{True:}` on the argument after (AVImark, 2026-09-30).
+            // wrote `{True:}` on the argument after (the client group, 2026-09-30).
             if (LNonName > 0) or
                ((AModel.Tree.Nodes[LChild].FirstToken > 0) and
                 AModel.Tree.Source.VisibleTextEquals(
@@ -789,7 +789,7 @@ end;
   number, a string, a call, an operator, and the three words that are
   literals in all but spelling: True, False, nil. Every NAME reads as its
   own annotation, a named constant included - `ostBoolean`, `SSCH03`,
-  `MaxInt`, `Self.FCount`, `TFoo.cLimit` (Alex, 2026-09-30, over AVImark's
+  `MaxInt`, `Self.FCount`, `TFoo.cLimit` (Alex, 2026-09-30, over the client group's
   CreateOption calls: "named constants such as enum values and plain
   constants are not annotated, True or a GUID string are"). A name is told by
   its node, so this needs no binding - the live buffer's own model does not

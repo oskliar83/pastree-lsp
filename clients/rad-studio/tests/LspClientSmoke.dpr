@@ -1358,7 +1358,7 @@ end;
   at the time, had come and gone without it, and nothing published again
   until the next edit. The IDE opens its tabs after the initial analysis on a
   real project, so an error already in the file when the project opened was
-  in the log and never underlined (2026-09-24, AVImark). The fixture's error
+  in the log and never underlined (2026-09-24, the client group). The fixture's error
   is a member after a dot, which also pins ReportUnresolvedMembers being on. }
 // Top level, not nested: the PumpUntil closure below cannot capture a nested
 // routine (E2555).
@@ -1520,7 +1520,7 @@ end;
   navigation in it until the first save (2026-09-25). Both arrival orders:
   the program first - what the IDE sends when the program is open in a tab
   (its edit rides the idle tick, the unit's didOpen the first-sight sync a
-  second later; the first AVImark run, 2026-09-26) - analyzed while the unit
+  second later; the first run on the client group, 2026-09-26) - analyzed while the unit
   was still missing, which the didOpen repairs by re-running the program that
   names it; and the unit first, one sync carrying both (a program with no
   editor view). Either way the unit joins through an INCREMENTAL run of the
@@ -3875,7 +3875,7 @@ end;
 { 5s. Generic methods and bracketed defaults. A declaration writes its type
   parameters' constraints and its body does not, so keying the name as
   written made both halves look missing; and a `= []` default lost only its
-  `= [`. One press in AVImark's TStripeService added two declarations, two
+  `= [`. One press in the client group's TStripeService added two declarations, two
   bodies and two uncompilable headers (2026-10-09). }
 procedure TestClassCompleteGeneric;
 begin
@@ -4351,7 +4351,7 @@ begin
   Check(GOk and GResultJson.Contains('"count":2'),
     'the layout applies to every argument, whatever the mode names');
 
-  // A NAMED constant is a name (Alex, 2026-09-30, AVImark's CreateOption
+  // A NAMED constant is a name (Alex, 2026-09-30, the client group's CreateOption
   // calls): an enum value and a const of another unit are left alone like a
   // variable, and only the literals get names.
   LFile := TPath.Combine(GFixtureDir, 'DemoAnnotateUse.pas');

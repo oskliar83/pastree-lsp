@@ -174,7 +174,7 @@ server log fills with F1027 "Unit not found".
 
 ### Restart on a configuration switch, not at the next request (0.77.0)
 
-Agreed with Alex 2026-10-15, built 2026-11-02. Seen on AVImark with 0.69.0:
+Agreed with Alex 2026-10-15, built 2026-11-02. Seen on the client group with 0.69.0:
 switching Debug -> Release -> Debug in the IDE left the server on Debug the
 whole time (`define DEBUG`, `switches: $O- $W+` in the log), with no restart
 line. The active configuration and platform were compared only in
@@ -220,19 +220,19 @@ Release - with nothing saying it was stale.
   emptied the sent set, so the buffers used to reach the new server with the
   next request only, it published no diagnostics until then, and nothing
   asked for the new semantic tokens - the grey stayed the old
-  configuration's until a tab switch (first AVImark run, 2026-11-02).
+  configuration's until a tab switch (the first run on the client group, 2026-11-02).
 - **Harness:** `LspTextSmoke`'s `TestConfigSwitch` holds the debounce rule
   and the line to cases. The IDE half - switch, wait, the log shows the
-  Release header without a request - is the AVImark test.
+  Release header without a request - is the client group's test.
 
 Known cost, accepted: a new process has no parse donor, so this is a full
-rebuild - 5.8 s on AVImark (2026-10-15), "analyzing..." on the status panel and
+rebuild - 5.8 s on the client group (2026-10-15), "analyzing..." on the status panel and
 requests waiting meanwhile. Configuration switches are rare.
 
 Not in this item: reconfiguring a running server instead of restarting it
 (SPEC.md says "not a reconfigure" - a restart is the path known to get
 everything right), and starting the new server beside the old one and
-swapping when it is ready (two ~2 GB processes at once on AVImark, and much
+swapping when it is ready (two ~2 GB processes at once on the client group, and much
 more code). Both stay deferred.
 
 Related, to confirm first: in the same session the IDE turned its own
@@ -402,7 +402,7 @@ implementer does not re-derive it:
   manager-selection order for two `HandlesFile('.pas')` claimants is
   undocumented.
 - **Selecting the provider from the plugin** (0.68.0, measured 2026-10-13 on
-  37.0 with AVImark): the Insight Provider combobox is the environment option
+  37.0 with the client group): the Insight Provider combobox is the environment option
   `InsightManager` (`IOTAEnvironmentOptions.Values`), a `tkLString` holding the
   selected manager's `IDString` (`Borland.CodeInsight.LSP.Pascal` for
   DelphiLSP). Writing it reads back at once and is saved at once;
@@ -450,7 +450,7 @@ Insight Provider, does the IDE ask the PROVIDER for Error Insight's errors?
 The manager implemented `IOTAModuleErrors` with two hand-built errors (an
 error over line 1, a warning over line 2) and logged every interface the IDE
 queried it for, once each, buffered until the log could take them (37.0,
-AVImark, Error Insight level Errors). Verdict NEGATIVE for the public route:
+the client group, Error Insight level Errors). Verdict NEGATIVE for the public route:
 
 - `IOTAModuleErrors` was never queried on the manager and `GetErrors` never
   ran; no underline appeared.
@@ -530,7 +530,7 @@ The chain:
    one per buffer: every call with True empties it first. DelphiLSP passes
    True only for the active module's buffer; 0.75.1 passed it for every
    file the server published for, and a clean file published after the
-   broken one emptied the folder at once (AVImark, 2026-10-23). Since 0.75.2
+   broken one emptied the folder at once (the client group, 2026-10-23). Since 0.75.2
    only the editor's top buffer gets True, and a tab switch re-pushes.
 3. **The pull.** A Delphi module's `IOTAModuleErrors.GetErrors`
    (`delphierrorinsite<ver>.bpl`, a module handler) asks the module for
@@ -555,7 +555,7 @@ above (Itanium-mangled in Win64, e.g. `_ZN12Sourcemodule12LSPGetErrorsE`);
 all import it and `UpdateErrorMarks` and all carry the marker GUID.
 
 **A project's main source is asked about under its .dproj** (read
-2026-10-23, proven with a probe manager on AVImarkD37.dpk 2026-10-24). The
+2026-10-23, proven with a probe manager on ClientD37.dpk 2026-10-24). The
 parse hooks of step 1 are `ElisionParser.TElisionModule`: `Modified` ->
 `RemoveErrors` on every edit (`UpdateErrorMarks(nil, Buffer, False)`), and
 `ApplyErrors` after every background parse (`UpdateErrorMarks(ItsOwnErrors,
@@ -1727,7 +1727,7 @@ the other changes take effect at the next request.
 half-populated pool would answer some clicks instantly and some after a full
 rebuild, with nothing on screen to explain which. Memory is a PasTree problem
 being solved in PasTree; the plugin does not paper over it with a policy the
-user cannot predict. On AVImark one server is 3.5-4 GB today, so a large group
+user cannot predict. On the client group one server is 3.5-4 GB today, so a large group
 is genuinely expensive - a number to fix, not to hide.
 
 **Lazily, never eagerly.** Opening a group starts the analysis of the ACTIVE
@@ -1814,7 +1814,7 @@ a real change of inputs, and does rebuild, correctly.
 So the servers die at exactly two moments: a DIFFERENT group opening (`Prune`),
 and the package unloading. The price is that they hold their memory while no
 group is open at all. Killing them on close would buy that back and cost the
-instant reopen - 7 s per project on AVImark - which is the wrong trade while
+instant reopen - 7 s per project on the client group - which is the wrong trade while
 the alternative is a wait the user did not ask for.
 
 ### Delivered
@@ -1851,11 +1851,11 @@ the alternative is a wait the user did not ask for.
    Superseded, 0.38.4: per-file routing of the DOCUMENT SYNC is gone; the
    route cache still decides which server answers a request. Owner-only sync
    lost edits for a project that compiles a unit through its SEARCH PATH
-   while another project's `.dproj` lists it (AVImarkServer compiles
-   `uaviItem.pas`, listed only by AVImark). 0.38.2 tried "listed owner or the
-   active project", which fixed the edit made from AVImarkServer and not the
-   one made from AVImark: with AVImark active, an edit to `uaviItem` never
-   reached AVImarkServer, and navigation from `frmImport` into it answered
+   while another project's `.dproj` lists it (ClientServer compiles
+   `uaviItem.pas`, listed only by Client). 0.38.2 tried "listed owner or the
+   active project", which fixed the edit made from ClientServer and not the
+   one made from Client: with Client active, an edit to `uaviItem` never
+   reached ClientServer, and navigation from `frmImport` into it answered
    from stale text. The client cannot know a project's closure, so it no
    longer guesses: every open buffer goes to every server, and the idle sync
    pushes a modified buffer to every ready server. The server filters
@@ -1904,7 +1904,7 @@ the alternative is a wait the user did not ask for.
    project list sits in `RenameForm`.
 ### Verified in a real group
 
-2026-09-07, `AVImark.groupproj` - NINE projects - on 0.31.1, from the five
+2026-09-07, `Client.groupproj` - NINE projects - on 0.31.1, from the five
 per-project logs it produced. Five servers came up within three minutes of
 ordinary work (3759 + 2127 + 707 + 311 + 266 units), with no
 `project configuration changed - restarting the server` line anywhere and no
@@ -1913,18 +1913,18 @@ duplicated `server ready`.
 The evidence for each rule, since it is the kind that is hard to reconstruct
 later:
 
-- **Cross-project routing.** `AVImarkChromium` answered a definition at
-  22:22:18 and its `IDE opened AVImarkChromium.dproj` line arrived at 22:22:24
+- **Cross-project routing.** `ClientBrowser` answered a definition at
+  22:22:18 and its `IDE opened ClientBrowser.dproj` line arrived at 22:22:24
   - the click was in a module of a project that was not yet active, and it was
   answered by that project's server seven seconds before the IDE said the
   project had become current.
-- **Lazy start by request.** `AVImarkChromiumHost` has no `IDE opened` line at
+- **Lazy start by request.** `ClientBrowserHost` has no `IDE opened` line at
   all. It was never activated; a routed request started it.
 - **A shared unit in two closures.** `uChromiumInit.pas` is an open buffer in
-  `AVImarkChromium` and the target of a definition in `AVImarkChromiumHost`,
+  `ClientBrowser` and the target of a definition in `ClientBrowserHost`,
   each server working from its own copy.
-- **Per-file document sync.** `AVImarkServer`'s log contains no `didOpen` at
-  all while the user navigated in `AVImark`'s units - before 0.31.1 both
+- **Per-file document sync.** `ClientServer`'s log contains no `didOpen` at
+  all while the user navigated in `Client`'s units - before 0.31.1 both
   servers would have received both buffers and both would have rebuilt.
 - **The unowned-file fallback.** `UITestManager` received
   `didOpen Winapi.TlHelp32.pas` as the active session: an RTL unit no project
@@ -1952,7 +1952,7 @@ and saves across the group, 0.51.3 put it behind the same scope dialog.
 `.dproj` lists - `IOTAProject.GetModuleCount/GetModule`, across the group
 with the checkbox - plus, for Find Unit, `.dcu` files on the Library Path.
 A unit that the project reaches implicitly, through the search path and a
-`uses` chain, never appears, and in AVImark that is most of the codebase.
+`uses` chain, never appears, and in the client group that is most of the codebase.
 The server already knows exactly that set: it is the closure it resolved.
 
 **Why it cannot be an extension.** Checked against 22.0, 23.0 and 37.0: both
@@ -2033,12 +2033,12 @@ nothing uses is not analyzed and cannot be listed (the IDE Library Path is
 read since 0.54.0, but only as a search path). Fine for Go To by symbol;
 not a Find Unit.
 
-**The arithmetic (AVImark, the real test bed).** The closure is 3767 units,
+**The arithmetic (the client group, the real test bed).** The closure is 3767 units,
 of which 1553 are project units producing 113,613 rows, 6.4 MB as the 0.46.0
 table, 65 ms cached end to end. The ~2200 library units are the LARGER ones
 (System, Winapi.Windows, Vcl.*, DevExpress), so the estimate is 300-500k
 rows and 20-30 MB - roughly 300 ms cached, a second uncached, and ~60 MB of
-`TLspOutlineRow` strings resident in a 32-bit IDE that AVImark already
+`TLspOutlineRow` strings resident in a 32-bit IDE that the client group already
 strains. The estimate is the one number nobody has measured: the first step
 of the work is to add `scope: library` to the server and run
 `local/bench/OutlineBench` (see the 0.46.0 bench notes) before choosing a

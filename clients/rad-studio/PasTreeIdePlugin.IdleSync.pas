@@ -26,7 +26,7 @@ unit PasTreeIdePlugin.IdleSync;
 
   A RELOAD FROM DISK IS NOT A MODIFICATION. When a file changes outside the
   IDE and the IDE reloads the buffer, EditorViewModified does not fire
-  (AVImark, 2026-09-24: five characters added outside, the file reloaded,
+  (the client group, 2026-09-24: five characters added outside, the file reloaded,
   and the log shows no didChange at all), so the server kept the old text
   and the type colouring painted the new text at the old columns. What does
   move is the buffer's own date: CheckBufferReloaded compares it per paint
