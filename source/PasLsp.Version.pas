@@ -509,7 +509,12 @@ const
   /// (286 s -> 5 s on a 3,054-unit project) and no library bodies promoted
   /// for it unless a library unit uses an own one - an older library makes
   /// the Unused... project search take minutes.
-  cMinPasTreeVersion = '0.198.0';
+  /// 0.199.0 (2026-11-16): the unused searches on the analysis's thread pool
+  /// (analysisThreads) and the uses lint's demand escalating whatever ran
+  /// first - an older library runs the Unused... project search on one core
+  /// and, when the uses lint is the first to need library bodies, promotes
+  /// hundreds of them one round at a time.
+  cMinPasTreeVersion = '0.199.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
