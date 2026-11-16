@@ -1585,8 +1585,9 @@ begin
     ShowResults;
     Exit;
   end;
-  UpdateWaitDialogWork(Format('Step %d of %d: %s', [AStep + 1,
-    Length(GSearch.Steps), cStepText[GSearch.Steps[AStep]]]));
+  // No "Step i of n" line (0.89.3, Alex): the requests after the first
+  // take a fraction of its time, so the line sat on step 1 for the whole
+  // wait and told nothing. One message for the whole search.
   LDone :=
     procedure(ASuccess: Boolean; const AAnswer: TLspUnusedAnswer;
       const AError: string)
