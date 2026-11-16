@@ -8893,7 +8893,14 @@ end;
   A row made by rows (PasTree 0.196.0, TPasUnusedSymbol.How) adds `how`
   ("usedOnlyByUnused", "onlyAssigned"), `by` (the rows using it, "" for
   itself), `writes` (the assignments, "File.pas:12") and `why`, the
-  sentence a client shows under the row; a row nothing uses has none. }
+  sentence a client shows under the row; a row nothing uses has none.
+  `exported` (PasTree 0.205.0, 0.89.13; off unless asked): the units a
+  package (.dpk) of the analysis contains are a library's
+  (TPasUnusedLibrary) - a declaration of their interface nothing here uses
+  stays a row with the doubt "exported" and `api` "exported", a row only
+  such rows use `api` "byExported". Off by default: a design-time package
+  is no library - on this project's IDE plugin it put the doubt on 24 of
+  31 rows that had none, and the Unused tab hides rows with a doubt. }
 
 // The members a row made by rows adds; '' for one nothing uses.
 function UnusedHowJson(const ARow: TPasUnusedSymbol): string;
@@ -8953,11 +8960,17 @@ var
   LHit: TPasRefHit;
   LSB: TStringBuilder;
   LStart: UInt64;
+  LLib: TPasUnusedLibrary;
+  LApi: string;
 begin
   LPath := DocPathOf(AMsg.Params);
   LScope := 'unit';
+  LLib := Default(TPasUnusedLibrary);
   if AMsg.Params <> nil then
+  begin
     LScope := AMsg.Params.GetValue<string>('scope', 'unit');
+    LLib.Packages := AMsg.Params.GetValue<Boolean>('exported', False);
+  end;
   if (LScope <> 'unit') and (LScope <> 'project') then
     Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
       'unusedSymbols: scope must be "unit" or "project"'));
@@ -8978,7 +8991,8 @@ begin
     LMids := ProjectUnitMids;
   // Through the workspace: in light mode a library body may use an own
   // declaration, and the demand makes those bodies full first.
-  LRows := FWS.FindUnusedSymbols(ModelFiles(LMids), LSkips, LInRowTypes);
+  LRows := FWS.FindUnusedSymbols(ModelFiles(LMids), LLib, nil, LSkips,
+    LInRowTypes);
   LNotSearched := WsDone('pastree/unusedSymbols');
   if FWS.Status.Cancelled then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
@@ -9021,13 +9035,20 @@ begin
       LHit.HiTo := LHit.HiFrom + Length(LName) - LAt;
       if LRows[LIdx].Doubts <> nil then
         Inc(LDoubtful);
+      case LRows[LIdx].Api of
+        uaExported: LApi := ',"api":"exported"';
+        uaByExported: LApi := ',"api":"byExported"';
+      else
+        LApi := '';
+      end;
       if LIdx > 0 then
         LSB.Append(',');
       LSB.Append(WithMembers(WithTypeSpans(HitLocationJson(LHit),
         LineTypeSpansJson(LHit.FilePath, LHit.Line)),
-        Format(',"name":%s,"kind":%s,"doubts":%s%s',
+        Format(',"name":%s,"kind":%s,"doubts":%s%s%s',
         [JsonQuote(LRows[LIdx].Name), JsonQuote(LKind),
-         StringsJson(LRows[LIdx].Doubts), UnusedHowJson(LRows[LIdx])])));
+         StringsJson(LRows[LIdx].Doubts), UnusedHowJson(LRows[LIdx]),
+         LApi])));
     end;
     LSkipped := '';
     for var LSkip := Low(TPasUnusedSkip) to High(TPasUnusedSkip) do

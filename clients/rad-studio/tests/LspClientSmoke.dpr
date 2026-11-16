@@ -5426,6 +5426,11 @@ begin
       'L: only assigned, never read - a row, with how and why');
     Check(GOk and not GResultJson.Contains('"name":"N","kind":"procedure",' +
       '"doubts":[],"how"'), 'N: nothing uses it - no how');
+    // `exported` (0.89.13, PasTree 0.205.0) is a package's units: a
+    // program's analysis holds none, so no row is exported.
+    Check(GOk and not GResultJson.Contains('"api":') and
+      not GResultJson.Contains('exported - '),
+      'a program''s analysis: no row exported');
     LParams := UnusedParams('library');
     Check(Ask('pastree/unusedSymbols', LParams) and not GOk,
       'unusedSymbols: a scope other than unit or project is refused');
