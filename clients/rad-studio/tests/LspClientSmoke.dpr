@@ -5403,7 +5403,8 @@ begin
     // pastree/unusedSymbols (0.89.0): UA's one declaration is used by the
     // program - an empty answer, the not-weighed counts still there; over
     // the project UNobody's N is the one declaration nothing calls (BProc,
-    // Reg and S are called, ULoc's L is written).
+    // Reg and S are called); ULoc's L is only assigned, never read - a row
+    // since PasTree 0.196.0.
     LParams := UnusedParams('unit');
     Check(Ask('pastree/unusedSymbols', LParams),
       'unusedSymbols (unit) answered');
@@ -5417,9 +5418,10 @@ begin
       'UNobody: N is unused, a procedure');
     Check(GOk and not GResultJson.Contains('"name":"BProc"') and
       not GResultJson.Contains('"name":"Reg"') and
-      not GResultJson.Contains('"name":"S"') and
-      not GResultJson.Contains('"name":"L"'),
-      'BProc, Reg and S are called, L is written - none is a row');
+      not GResultJson.Contains('"name":"S"'),
+      'BProc, Reg and S are called - none is a row');
+    Check(GOk and GResultJson.Contains('"name":"L","kind":"variable"'),
+      'ULoc: L is only assigned, never read - a row');
     LParams := UnusedParams('library');
     Check(Ask('pastree/unusedSymbols', LParams) and not GOk,
       'unusedSymbols: a scope other than unit or project is refused');

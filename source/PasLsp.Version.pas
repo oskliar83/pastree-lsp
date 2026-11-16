@@ -505,7 +505,11 @@ const
   /// implements, EXTERNALSYM names, enum values, helpers, form-bound
   /// methods counted, library-replacing units skipped (usReplacesLibrary,
   /// which cSkipWord names) - an older library lists them as unused.
-  cMinPasTreeVersion = '0.195.0';
+  /// 0.198.0 (2026-11-16): FindUnusedSymbols on a whole project in seconds
+  /// (286 s -> 5 s on a 3,054-unit project) and no library bodies promoted
+  /// for it unless a library unit uses an own one - an older library makes
+  /// the Unused... project search take minutes.
+  cMinPasTreeVersion = '0.198.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
