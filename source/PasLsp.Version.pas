@@ -517,7 +517,10 @@ const
   /// 0.199.1 (2026-11-16): TPasUnusedSymbol.How / By / Writes (rows made
   /// by rows, fields only assigned, a bare inherited placed) - an older
   /// library has no such fields.
-  cMinPasTreeVersion = '0.199.1';
+  /// 0.199.2 (2026-11-16): no "first section, may be published" doubt on a
+  /// plain class in a form's unit - an older library hides such rows by
+  /// default, and the types only their fields hold.
+  cMinPasTreeVersion = '0.199.2';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
