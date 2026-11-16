@@ -8880,7 +8880,52 @@ end;
   be wrong; the client hides such rows unless asked for them). `skipped`
   says what was not weighed at all - published members, virtual methods,
   interface members... - by a count each, so an empty answer is not read
-  as "everything is used". Nothing is removed from here (Alex, 2026-11-14). }
+  as "everything is used". Nothing is removed from here (Alex, 2026-11-14).
+  A row made by rows (PasTree 0.196.0, TPasUnusedSymbol.How) adds `how`
+  ("usedOnlyByUnused", "onlyAssigned"), `by` (the rows using it, "" for
+  itself), `writes` (the assignments, "File.pas:12") and `why`, the
+  sentence a client shows under the row; a row nothing uses has none. }
+
+// The members a row made by rows adds; '' for one nothing uses.
+function UnusedHowJson(const ARow: TPasUnusedSymbol): string;
+
+  function Names(const AList: TArray<string>; AMax: Integer): string;
+  begin
+    Result := '';
+    for var LI := 0 to Min(High(AList), AMax - 1) do
+      Result := Result + IfThen(Result <> '', ', ') + IfThen(AList[LI] = '',
+        'itself', AList[LI]);
+    if Length(AList) > AMax then
+      Result := Result + Format(' and %d more', [Length(AList) - AMax]);
+  end;
+
+var
+  LHow, LWhy: string;
+begin
+  case ARow.How of
+    uhOnlyByUnused:
+      begin
+        LHow := 'usedOnlyByUnused';
+        if (Length(ARow.By) = 1) and (ARow.By[0] = '') then
+          LWhy := 'only its own body uses it'
+        else
+          LWhy := 'used only by unused ' + Names(ARow.By, 5) +
+            ' - it goes with them';
+      end;
+    uhOnlyWritten:
+      begin
+        LHow := 'onlyAssigned';
+        LWhy := 'only assigned (' + Names(ARow.Writes, 3) + '), never read';
+        if ARow.By <> nil then
+          LWhy := LWhy + '; its other uses are in unused ' + Names(ARow.By, 5);
+      end;
+  else
+    Exit('');
+  end;
+  Result := Format(',"how":%s,"by":%s,"writes":%s,"why":%s', [JsonQuote(LHow),
+    StringsJson(ARow.By), StringsJson(ARow.Writes), JsonQuote(LWhy)]);
+end;
+
 function TLspServer.HandleUnusedSymbols(const AMsg: TLspIncoming): string;
 const
   cSkipWord: array[TPasUnusedSkip] of string = ('published members',
@@ -8969,9 +9014,9 @@ begin
         LSB.Append(',');
       LSB.Append(WithMembers(WithTypeSpans(HitLocationJson(LHit),
         LineTypeSpansJson(LHit.FilePath, LHit.Line)),
-        Format(',"name":%s,"kind":%s,"doubts":%s',
+        Format(',"name":%s,"kind":%s,"doubts":%s%s',
         [JsonQuote(LRows[LIdx].Name), JsonQuote(LKind),
-         StringsJson(LRows[LIdx].Doubts)])));
+         StringsJson(LRows[LIdx].Doubts), UnusedHowJson(LRows[LIdx])])));
     end;
     LSkipped := '';
     for var LSkip := Low(TPasUnusedSkip) to High(TPasUnusedSkip) do

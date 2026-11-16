@@ -732,6 +732,8 @@ var
       LSymbol.FilePath, LSymbol.Row), LSymbol.Col, LSymbol.Len, LSymbol.Kind,
       LSymbol.TypeSpans), AParent);
     GTab.RowNode.AddOrSetValue(LRowPtr, [ANode]);
+    if LSymbol.Why <> '' then
+      Note(ANode, '', LSymbol.Why, LRowPtr);
     for var LDoubt in LSymbol.Doubts do
       Note(ANode, 'doubt: ', LDoubt, LRowPtr);
   end;

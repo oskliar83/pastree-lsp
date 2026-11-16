@@ -611,6 +611,10 @@ type
     Row, Col, Len: Integer;
     Name, Kind: string;
     Doubts: TArray<string>;
+    // A row made by rows (server 0.89.2): why it is one - "used only by
+    // unused X - it goes with them", "only assigned (...), never read"; ''
+    // for one nothing uses.
+    Why: string;
     TypeSpans: TArray<Integer>;
   end;
 
@@ -5464,6 +5468,7 @@ begin
         LSymbol.Name := LObj.GetValue<string>('name', '');
         LSymbol.Kind := LObj.GetValue<string>('kind', '');
         LSymbol.Doubts := ReadStrings(LObj, 'doubts');
+        LSymbol.Why := LObj.GetValue<string>('why', '');
         LSymbol.TypeSpans := ReadIntArray(LObj, 'typeSpans');
         // Thousands of rows on a large project: grown by halves, not by one.
         if LSymbols = Length(Result.Symbols) then

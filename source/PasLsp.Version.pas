@@ -514,7 +514,10 @@ const
   /// first - an older library runs the Unused... project search on one core
   /// and, when the uses lint is the first to need library bodies, promotes
   /// hundreds of them one round at a time.
-  cMinPasTreeVersion = '0.199.0';
+  /// 0.199.1 (2026-11-16): TPasUnusedSymbol.How / By / Writes (rows made
+  /// by rows, fields only assigned, a bare inherited placed) - an older
+  /// library has no such fields.
+  cMinPasTreeVersion = '0.199.1';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
