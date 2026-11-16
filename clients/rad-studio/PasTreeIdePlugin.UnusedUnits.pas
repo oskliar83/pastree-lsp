@@ -651,7 +651,7 @@ var
   LMessageServices: IOTAMessageServices;
   LGroup: IOTAMessageGroup;
   LCache: TObjectDictionary<string, TStringList>;
-  LTitle, LParts: string;
+  LTitle: string;
   LEntries, LUnits, LSymbols: TArray<Integer>;
   LRemoved: Integer;
   LIdx: Integer;
@@ -824,15 +824,6 @@ var
     end;
   end;
 
-  procedure AddPart(ASearched: Boolean; ACount: Integer; const AWhat: string);
-  begin
-    if not ASearched then
-      Exit;
-    if LParts <> '' then
-      LParts := LParts + ', ';
-    LParts := LParts + IntToStr(ACount) + ' ' + AWhat;
-  end;
-
 begin
   if not Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices)
   then
@@ -859,18 +850,12 @@ begin
       end;
   LCache := TObjectDictionary<string, TStringList>.Create([doOwnsValues]);
   try
-    LParts := '';
-    AddPart(GTab.Options.Declarations, Length(LSymbols),
-      IfThen(Length(LSymbols) = 1, 'declaration', 'declarations'));
-    AddPart(GTab.Options.UsesEntries, Length(LEntries),
-      IfThen(Length(LEntries) = 1, 'unit in uses', 'units in uses'));
-    AddPart(GTab.Options.SearchesNobodyUses, Length(LUnits),
-      IfThen(Length(LUnits) = 1, 'unit nobody uses', 'units nobody uses'));
+    // The title names what was searched, no counts: each part's row below
+    // carries its own (0.89.6, Alex - the counts here only repeated them).
     if GTab.Options.Project then
       LTitle := 'Unused in ' + ExtractFileName(GTab.Answer.ProjectFile)
     else
       LTitle := 'Unused in ' + ExtractFileName(GTab.TitleFile);
-    LTitle := LTitle + ': ' + LParts;
     if LRemoved > 0 then
       LTitle := LTitle + Format(' - %d removed, Revert takes the last ' +
         'Remove back', [LRemoved]);
