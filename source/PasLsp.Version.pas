@@ -520,7 +520,13 @@ const
   /// 0.199.2 (2026-11-16): no "first section, may be published" doubt on a
   /// plain class in a form's unit - an older library hides such rows by
   /// default, and the types only their fields hold.
-  cMinPasTreeVersion = '0.199.2';
+  /// 0.200.0 (2026-11-16): FindUnusedSymbols leaves no confident row for a
+  /// class constructor declared in its class, a class-typed implements
+  /// delegate, a name a $IF reads or a {$M+} class's first section.
+  /// 0.201.0 (2026-11-16): FindUnusedSymbols leaves out the members of a
+  /// type that is a row itself, and counts them (AInRowTypes) - reported
+  /// as a skipped entry.
+  cMinPasTreeVersion = '0.201.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

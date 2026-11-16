@@ -8936,7 +8936,7 @@ const
 var
   LPath, LScope, LKind, LName, LSkipped: string;
   LMids: TArray<Integer>;
-  LRows: TArray<TPasUnusedSymbol>;
+  LRows, LInRowTypes: TArray<TPasUnusedSymbol>;
   LSkips: TPasUnusedSkips;
   LMid, LAt, LDoubtful, LNotSearched: Integer;
   LHit: TPasRefHit;
@@ -8967,7 +8967,7 @@ begin
     LMids := ProjectUnitMids;
   // Through the workspace: in light mode a library body may use an own
   // declaration, and the demand makes those bodies full first.
-  LRows := FWS.FindUnusedSymbols(ModelFiles(LMids), LSkips);
+  LRows := FWS.FindUnusedSymbols(ModelFiles(LMids), LSkips, LInRowTypes);
   LNotSearched := WsDone('pastree/unusedSymbols');
   if FWS.Status.Cancelled then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
@@ -9027,6 +9027,16 @@ begin
         LSkipped := LSkipped + Format('{"what":%s,"count":%d}',
           [JsonQuote(cSkipWord[LSkip]), LSkips[LSkip]]);
       end;
+    // Members of a type that is a row itself, which goes with them
+    // (PasTree 0.201.0): weighed, but not listed.
+    if LInRowTypes <> nil then
+    begin
+      if LSkipped <> '' then
+        LSkipped := LSkipped + ',';
+      LSkipped := LSkipped + Format('{"what":%s,"count":%d}',
+        [JsonQuote('members of a type that is unused itself'),
+         Length(LInRowTypes)]);
+    end;
     Log(Format('unusedSymbols %s: %d units checked -> %d declarations, %d ' +
       'with a doubt, in %d ms', [LScope, Length(LMids), Length(LRows),
       LDoubtful, GetTickCount64 - LStart]));
