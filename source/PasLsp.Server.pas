@@ -8941,7 +8941,8 @@ const
     'virtual, dynamic or message methods', 'interface members',
     'methods an interface names', 'operators', 'class constructors',
     'attribute constructors', 'for-in methods', 'generated units',
-    'units that replace a library unit');
+    'units that replace a library unit',
+    'Register procedures of a package (the IDE calls them)');
 var
   LPath, LScope, LKind, LName, LSkipped: string;
   LMids: TArray<Integer>;

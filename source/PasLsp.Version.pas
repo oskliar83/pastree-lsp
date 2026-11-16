@@ -529,7 +529,11 @@ const
   /// 0.202.0 (2026-11-16): FindUnusedUses' loTogether (the rows Remove All
   /// takes out weighed together) and PasTree.UsesEdit, the uses-clause
   /// rewriter that was PasLsp.UnusedUnits.
-  cMinPasTreeVersion = '0.202.0';
+  /// 0.203.0 (2026-11-16): a package's `procedure Register;` not weighed
+  /// (usPackageRegister, which cSkipWord names) - an older library lists it
+  /// and every row only it reaches as unused - and a doubt carried down the
+  /// whole chain of rows made by rows.
+  cMinPasTreeVersion = '0.203.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
