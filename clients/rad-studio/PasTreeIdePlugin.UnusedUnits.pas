@@ -22,7 +22,12 @@ unit PasTreeIdePlugin.UnusedUnits;
   `uses` for what it registers (PasTree's loHideGlobalInit, Alex
   2026-10-05). A row with a doubt is dropped here, on arrival, unless the
   dialog asked for them: then it is shown with its doubts under it, and a
-  `uses` entry or a unit with a doubt is never removed.
+  `uses` entry or a unit with a doubt is never removed. Remove All takes out
+  every entry with no doubt at once, so the server weighs them that way
+  (PasTree's loTogether, 0.89.9): an entry safe alone but, with the others,
+  the last path to a unit with initialization or a resource comes with a
+  doubt ("removed together with the other unused entries ...") - kept
+  like any other doubt row, never removed silently.
 
   THE TREE: a title row with the counts, then a row per part searched that
   found anything - "declarations (N)", "units in uses (N)", "units nobody

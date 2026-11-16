@@ -44,7 +44,7 @@ uses
   PasLsp.SyncPrototypes,
   PasLsp.AnnotateArgs,
   PasLsp.UseUnit,
-  PasLsp.UnusedUnits;
+  PasTree.UsesEdit;
 
 type
   TLspCompletionEntry = record
@@ -261,10 +261,10 @@ type
       AImplementation: Boolean; const AIndent: string;
       ARightMargin: Integer): TLspUseUnitAnswer;
     { Unused Units' Remove: the clause rewrites that take ANames out of the
-      live text's uses (PasLsp.UnusedUnits.UsesRemovalByName). }
+      live text's uses (PasTree.UsesEdit.UsesRemovalByName). }
     function UsesRemovalAt(const AFileName, AText: string;
       const ANames: TArray<string>; out ARefused, AMissing: TArray<string>)
-      : TArray<TLspUsesRemoval>;
+      : TArray<TPasUsesRemoval>;
   end;
 
 { How many values the enumerated type ASym of model AMid declares, its
@@ -2354,7 +2354,7 @@ end;
 
 function TLspCompletionEngine.UsesRemovalAt(const AFileName, AText: string;
   const ANames: TArray<string>; out ARefused, AMissing: TArray<string>)
-  : TArray<TLspUsesRemoval>;
+  : TArray<TPasUsesRemoval>;
 var
   LPre: TPasPreprocessed;
   LTree: TPasTree;

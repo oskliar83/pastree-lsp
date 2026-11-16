@@ -526,7 +526,10 @@ const
   /// 0.201.0 (2026-11-16): FindUnusedSymbols leaves out the members of a
   /// type that is a row itself, and counts them (AInRowTypes) - reported
   /// as a skipped entry.
-  cMinPasTreeVersion = '0.201.0';
+  /// 0.202.0 (2026-11-16): FindUnusedUses' loTogether (the rows Remove All
+  /// takes out weighed together) and PasTree.UsesEdit, the uses-clause
+  /// rewriter that was PasLsp.UnusedUnits.
+  cMinPasTreeVersion = '0.202.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

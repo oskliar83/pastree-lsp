@@ -97,7 +97,7 @@ uses
   PasLsp.SyncPrototypes,
   PasLsp.AnnotateArgs,
   PasLsp.UseUnit,
-  PasLsp.UnusedUnits,
+  PasTree.UsesEdit,
   PasTree.Sema.Lint,
   PasTree.Sema.Workspace,
   PasLsp.BlockClose,
@@ -8624,7 +8624,7 @@ end;
 procedure TLspServer.RemovalRefusals(const AByModel: TDictionary<Integer,
   TArray<Integer>>; ARefused: TDictionary<Int64, string>);
 var
-  LRefused: TArray<TLspUsesRefusal>;
+  LRefused: TArray<TPasUsesRefusal>;
 begin
   for var LPair in AByModel do
   begin
@@ -8666,7 +8666,15 @@ end;
   loHideGlobalInit, always: an entry naming a unit whose initialization
   reaches outside itself, or whose removal would take one out of the
   program, is not offered at all (Alex, 2026-10-05) - it is in `uses` for what it
-  registers. }
+  registers.
+
+  loTogether, always (PasTree 0.202.0): the client's Remove All takes out
+  every row with no doubt at once, and each may be safe alone while all are
+  not - two entries that are the only paths to a unit with initialization,
+  or a resource, leave it out of the program together. Such a row gets the
+  doubt "removed together with the other unused entries no doubt holds
+  back, it leaves X out of P", so the client treats it as any doubt row:
+  hidden unless doubts are asked for, never removed. }
 function TLspServer.HandleUnusedUses(const AMsg: TLspIncoming): string;
 var
   LPath, LScope, LReason: string;
@@ -8708,7 +8716,8 @@ begin
   // lint reads full first (a rebuild with the project as donor when a
   // promotion asks for one): the rows are the full analysis's. By file,
   // since the model ids are a new project's after a rebuild.
-  LRows := FWS.FindUnusedUses(ModelFiles(LMids), [loHideGlobalInit]);
+  LRows := FWS.FindUnusedUses(ModelFiles(LMids), [loHideGlobalInit,
+    loTogether]);
   LNotSearched := WsDone('pastree/unusedUses');
   if FWS.Status.Cancelled then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
@@ -9049,7 +9058,7 @@ end;
 
 { pastree/usesRemoval - OURS. Unused Units' Remove: `files`, each a `uri`
   and the `names` to take out of its `uses` clauses, answered with the
-  clause rewrites (uri, range, oldText, newText - PasLsp.UnusedUnits) on
+  clause rewrites (uri, range, oldText, newText - PasTree.UsesEdit) on
   the text as it is NOW - the open document, or the file on disk. Parse
   only, no analysis to wait for: one Remove after another rewrites the same
   clause again, and an edit computed with the search would no longer match
@@ -9061,7 +9070,7 @@ var
   LFiles, LNames: TJSONArray;
   LPath, LText: string;
   LWanted, LRefused, LMissing, LAllRefused, LAllMissing: TArray<string>;
-  LEdits: TArray<TLspUsesRemoval>;
+  LEdits: TArray<TPasUsesRemoval>;
   LLine, LChar, LEndLine, LEndChar, LCount: Integer;
   LSB: TStringBuilder;
 begin
