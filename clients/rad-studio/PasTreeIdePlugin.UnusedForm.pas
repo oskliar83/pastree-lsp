@@ -6,7 +6,11 @@ unit PasTreeIdePlugin.UnusedForm;
   Nobody Uses), with the question set here (Alex, 2026-11-14):
 
   - where: the unit in the editor, named, or its project, named. The unit
-    is offered only for a Pascal source; the project is always there.
+    is offered only for a Pascal source; the project is always there. And
+    since 0.93.0 the project group, named, when it has two projects or
+    more: the projects to ask are then chosen in the group scope dialog
+    (PasTreeIdePlugin.GroupScope, as Find All References), and a row is
+    one only when every chosen project holding its file finds it unused.
   - what: unused declarations (PasTree 0.191.0's FindUnusedSymbols),
     unused `uses` entries, units nobody uses - the last one a project
     question, greyed while the unit is chosen (its tick kept).
@@ -32,6 +36,7 @@ uses
 type
   TUnusedOptions = record
     Project: Boolean;          // False: the unit in the editor
+    Group: Boolean;            // the project group (Project is True too)
     Declarations: Boolean;
     UsesEntries: Boolean;
     NobodyUses: Boolean;       // project only
@@ -45,6 +50,7 @@ type
     grpScope: TGroupBox;
     rbUnit: TRadioButton;
     rbProject: TRadioButton;
+    rbGroup: TRadioButton;
     grpLookFor: TGroupBox;
     cbDeclarations: TCheckBox;
     cbUsesEntries: TCheckBox;
@@ -65,11 +71,13 @@ var
 /// <summary>
 /// Shows the dialog modally. AUnitFile is the file in the editor ('' or a
 /// non-Pascal file: the unit cannot be chosen), AProjectFile the .dproj
-/// that answers for it. On OK remembers the choice and returns True with it
-/// in AOptions; False on Cancel.
+/// that answers for it, AGroupFile the .groupproj when the group has two
+/// projects or more ('' otherwise: the group cannot be chosen). On OK
+/// remembers the choice and returns True with it in AOptions; False on
+/// Cancel.
 /// </summary>
-function ExecuteUnusedDialog(const AUnitFile, AProjectFile: string;
-  out AOptions: TUnusedOptions): Boolean;
+function ExecuteUnusedDialog(const AUnitFile, AProjectFile,
+  AGroupFile: string; out AOptions: TUnusedOptions): Boolean;
 
 implementation
 
@@ -85,6 +93,7 @@ uses
 
 const
   cValueProject = 'UnusedScopeProject';
+  cValueGroup = 'UnusedScopeGroup';
   cValueDeclarations = 'UnusedDeclarations';
   cValueUsesEntries = 'UnusedUsesEntries';
   cValueNobodyUses = 'UnusedNobodyUses';
@@ -103,6 +112,7 @@ end;
 function DefaultOptions: TUnusedOptions;
 begin
   Result.Project := False;
+  Result.Group := False;
   Result.Declarations := True;
   Result.UsesEntries := True;
   Result.NobodyUses := True;
@@ -132,6 +142,7 @@ begin
       if LReg.OpenKeyReadOnly(SettingsRegistryKey) then
       begin
         Result.Project := ReadBool(cValueProject, Result.Project);
+        Result.Group := ReadBool(cValueGroup, Result.Group);
         Result.Declarations := ReadBool(cValueDeclarations, Result.Declarations);
         Result.UsesEntries := ReadBool(cValueUsesEntries, Result.UsesEntries);
         Result.NobodyUses := ReadBool(cValueNobodyUses, Result.NobodyUses);
@@ -158,6 +169,7 @@ begin
       if LReg.OpenKey(SettingsRegistryKey, True) then
       begin
         LReg.WriteBool(cValueProject, AOptions.Project);
+        LReg.WriteBool(cValueGroup, AOptions.Group);
         LReg.WriteBool(cValueDeclarations, AOptions.Declarations);
         LReg.WriteBool(cValueUsesEntries, AOptions.UsesEntries);
         LReg.WriteBool(cValueNobodyUses, AOptions.NobodyUses);
@@ -174,7 +186,8 @@ end;
 
 function TPasTreeUnusedForm.Options: TUnusedOptions;
 begin
-  Result.Project := rbProject.Checked;
+  Result.Project := rbProject.Checked or rbGroup.Checked;
+  Result.Group := rbGroup.Checked;
   Result.Declarations := cbDeclarations.Checked;
   Result.UsesEntries := cbUsesEntries.Checked;
   Result.NobodyUses := cbNobodyUses.Checked;
@@ -184,7 +197,7 @@ end;
 procedure TPasTreeUnusedForm.ChoiceChanged(ASender: TObject);
 begin
   // Greyed, not unticked: the tick comes back with the project.
-  cbNobodyUses.Enabled := rbProject.Checked;
+  cbNobodyUses.Enabled := rbProject.Checked or rbGroup.Checked;
   btnOK.Enabled := Options.SearchesAnything;
 end;
 
@@ -195,19 +208,28 @@ begin
     SameText(ExtractFileExt(AFile), '.dpk'));
 end;
 
-function ExecuteUnusedDialog(const AUnitFile, AProjectFile: string;
-  out AOptions: TUnusedOptions): Boolean;
+function ExecuteUnusedDialog(const AUnitFile, AProjectFile,
+  AGroupFile: string; out AOptions: TUnusedOptions): Boolean;
 var
   LForm: TPasTreeUnusedForm;
   LTheming: IOTAIDEThemingServices;
-  LThemed, LUnitOk: Boolean;
-  LOptions: TUnusedOptions;
+  LThemed, LUnitOk, LGroupOk: Boolean;
+  LOptions, LSaved: TUnusedOptions;
 begin
   Result := False;
   AOptions := DefaultOptions;
   LOptions := LoadOptions;
   LUnitOk := IsPascalSource(AUnitFile);
+  LGroupOk := AGroupFile <> '';
   if not LUnitOk then
+    LOptions.Project := True;
+  // The group remembered while none is open: the project stands in.
+  if not LGroupOk and LOptions.Group then
+  begin
+    LOptions.Group := False;
+    LOptions.Project := True;
+  end;
+  if LOptions.Group then
     LOptions.Project := True;
   LThemed := Supports(BorlandIDEServices, IOTAIDEThemingServices, LTheming)
     and LTheming.IDEThemingEnabled;
@@ -224,14 +246,22 @@ begin
     LForm.rbUnit.Enabled := LUnitOk;
     if AProjectFile <> '' then
       LForm.rbProject.Caption := 'Project (' + ExtractFileName(AProjectFile) + ')';
+    if LGroupOk then
+      LForm.rbGroup.Caption := 'Project group (' +
+        ChangeFileExt(ExtractFileName(AGroupFile), '') + ')'
+    else
+      LForm.rbGroup.Caption := 'Project group (none of two projects or more)';
+    LForm.rbGroup.Enabled := LGroupOk;
     LForm.rbUnit.Checked := not LOptions.Project;
-    LForm.rbProject.Checked := LOptions.Project;
+    LForm.rbProject.Checked := LOptions.Project and not LOptions.Group;
+    LForm.rbGroup.Checked := LOptions.Group;
     LForm.cbDeclarations.Checked := LOptions.Declarations;
     LForm.cbUsesEntries.Checked := LOptions.UsesEntries;
     LForm.cbNobodyUses.Checked := LOptions.NobodyUses;
     LForm.cbDoubts.Checked := LOptions.Doubts;
     LForm.rbUnit.OnClick := LForm.ChoiceChanged;
     LForm.rbProject.OnClick := LForm.ChoiceChanged;
+    LForm.rbGroup.OnClick := LForm.ChoiceChanged;
     LForm.cbDeclarations.OnClick := LForm.ChoiceChanged;
     LForm.cbUsesEntries.OnClick := LForm.ChoiceChanged;
     LForm.cbNobodyUses.OnClick := LForm.ChoiceChanged;
@@ -239,11 +269,15 @@ begin
     if LForm.ShowModal <> mrOk then
       Exit;
     AOptions := LForm.Options;
-    // The unit greyed out is not a choice of the project: the scope saved
-    // stays the one made last time the unit could be chosen.
+    // The unit greyed out is not a choice of the project, nor the group
+    // greyed out one of the project: the scope saved stays the one made
+    // last time it could be chosen.
     LOptions := AOptions;
-    if not LUnitOk then
-      LOptions.Project := LoadOptions.Project;
+    LSaved := LoadOptions;
+    if not LGroupOk and LSaved.Group and AOptions.Project then
+      LOptions.Group := True   // the project stood in for the group
+    else if not LUnitOk and not AOptions.Group then
+      LOptions.Project := LSaved.Project;
     SaveOptions(LOptions);
     Result := AOptions.SearchesAnything;
   finally

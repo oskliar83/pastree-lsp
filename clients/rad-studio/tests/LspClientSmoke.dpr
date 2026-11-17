@@ -27,7 +27,8 @@ uses
   PasTreeIdePlugin.LspClient,
   PasTreeIdePlugin.OutlineRows,  // the Go To table's reader, checked in 5d-ter
   PasTreeIdePlugin.NavSymbols,    // the navigation toolbar's tree, ditto
-  PasTreeIdePlugin.FormatText;    // Format's options and edits, 5i
+  PasTreeIdePlugin.FormatText,    // Format's options and edits, 5i
+  PasTreeIdePlugin.UnusedRows;    // the Unused rows and the group merge, 5x-bis
 
 const
   { The server this repo's own build.bat produces, as a path RELATIVE to the
@@ -5638,6 +5639,270 @@ begin
   end;
 end;
 
+{ 5x-bis. GROUP MODE of Find All > Unused... (0.93.0): two programs sharing a
+  unit, each with a server of its own, asked with `group: true` and merged
+  by PasTreeIdePlugin.UnusedRows as the plugin merges them. GShared declares
+  UsedByA (GA calls it), UsedByB (GB calls it), UsedByNone and UsedInB (its
+  body calls GSome only where GB is defined), and lists GUnusedU (nothing)
+  and GSome. Per project UsedByB / UsedByA are rows; for the group only
+  what neither uses. GSome is unused for GA only: no group row. GOnlyA
+  (only GA holds it) keeps GA's verdict. GOrphan, listed by GB.dpr alone
+  and used by nobody, is a unit nobody uses for the group; GUsedA, listed
+  by both and used by GA, is not. Then the together check: TA and TB both
+  list TInit (initialization) and use nothing of it - `removed` with one
+  of them leaves no doubt, with both each is held back. }
+procedure TestUnusedGroup(const AExe: string);
+var
+  LDir: string;
+  LSaved, LA, LB: TLspClient;
+  LAnswers: TArray<TLspUnusedAnswer>;
+  LMerged, LAnsA, LAnsB, LTogether: TLspUnusedAnswer;
+
+  procedure WriteFile(const AName, AText: string);
+  begin
+    TFile.WriteAllText(TPath.Combine(LDir, AName), AText);
+  end;
+
+  function NewServer(const AProject: string;
+    const ADefines: TArray<string>): TLspClient;
+  var
+    LOptions: TLspInitOptions;
+  begin
+    Result := TLspClient.Create(AExe, ExtractFilePath(AExe),
+      procedure(const AText: string)
+      begin
+      end);
+    LOptions := Default(TLspInitOptions);
+    LOptions.ProjectFile := TPath.Combine(LDir, AProject);
+    LOptions.Platform := 'Win32';
+    LOptions.SearchPaths := [LDir];
+    LOptions.Defines := ADefines;
+    Check(Result.Start(LOptions), 'a server for ' + AProject);
+  end;
+
+  function GroupParams(const ARemoved: TJSONArray = nil): TJSONObject;
+  var
+    LDoc: TJSONObject;
+  begin
+    Result := TJSONObject.Create;
+    LDoc := TJSONObject.Create;
+    LDoc.AddPair('uri', PathToLspUri(TPath.Combine(LDir, 'GShared.pas')));
+    Result.AddPair('textDocument', LDoc);
+    Result.AddPair('scope', 'project');
+    Result.AddPair('group', TJSONBool.Create(True));
+    if ARemoved <> nil then
+      Result.AddPair('removed', ARemoved);
+  end;
+
+  // AClient's answer to AMethod, parsed as the plugin parses it.
+  function AskOf(AClient: TLspClient; const AMethod: string;
+    AParams: TJSONObject): TLspUnusedAnswer;
+  var
+    LValue: TJSONValue;
+  begin
+    Result := Default(TLspUnusedAnswer);
+    GClient := AClient;
+    if not Ask(AMethod, AParams) or not GOk then
+      Exit;
+    LValue := TJSONObject.ParseJSONValue(GResultJson);
+    try
+      Result := ParseUnusedAnswer(LValue);
+    finally
+      LValue.Free;
+    end;
+  end;
+
+  // One project's three answers joined, as the plugin joins them.
+  function ProjectAnswer(AClient: TLspClient): TLspUnusedAnswer;
+  var
+    LPart: TLspUnusedAnswer;
+  begin
+    Result := AskOf(AClient, 'pastree/unusedSymbols', GroupParams);
+    LPart := AskOf(AClient, 'pastree/unusedUses', GroupParams);
+    Result.Entries := LPart.Entries;
+    LPart := AskOf(AClient, 'pastree/unreferencedUnits', GroupParams);
+    Result.Units := LPart.Units;
+  end;
+
+  function HasSymbol(const AAnswer: TLspUnusedAnswer;
+    const AName: string): Boolean;
+  begin
+    for var LS in AAnswer.Symbols do
+      if SameText(LS.Name, AName) then
+        Exit(True);
+    Result := False;
+  end;
+
+  function HasEntry(const AAnswer: TLspUnusedAnswer;
+    const AFile, AUnit: string): Boolean;
+  begin
+    for var LE in AAnswer.Entries do
+      if SameText(ExtractFileName(LE.FilePath), AFile) and
+         SameText(LE.UnitName, AUnit) then
+        Exit(True);
+    Result := False;
+  end;
+
+  function HasUnit(const AAnswer: TLspUnusedAnswer;
+    const AUnit: string): Boolean;
+  begin
+    for var LU in AAnswer.Units do
+      if SameText(LU.UnitName, AUnit) then
+        Exit(True);
+    Result := False;
+  end;
+
+  function HoldsFile(const AAnswer: TLspUnusedAnswer;
+    const AFile: string): Boolean;
+  begin
+    for var LP in AAnswer.Held do
+      if SameText(ExtractFileName(LP), AFile) then
+        Exit(True);
+    Result := False;
+  end;
+
+  // The TInit entries of the files AFiles names, as `removed` takes them.
+  function RemovedOf(const AFiles: array of string): TJSONArray;
+  var
+    LPlace: TJSONObject;
+  begin
+    Result := TJSONArray.Create;
+    for var LE in LAnsA.Entries do
+      for var LF in AFiles do
+        if SameText(ExtractFileName(LE.FilePath), LF) and
+           SameText(LE.UnitName, 'TInit') then
+        begin
+          LPlace := TJSONObject.Create;
+          LPlace.AddPair('uri', PathToLspUri(LE.FilePath));
+          LPlace.AddPair('line', TJSONNumber.Create(LE.Row - 1));
+          LPlace.AddPair('character', TJSONNumber.Create(LE.Col - 1));
+          Result.AddElement(LPlace);
+        end;
+  end;
+
+  function TInitDoubts(const AAnswer: TLspUnusedAnswer): Integer;
+  begin
+    Result := 0;
+    for var LE in AAnswer.Entries do
+      if SameText(LE.UnitName, 'TInit') and (Length(LE.Doubts) = 1) and
+         LE.Doubts[0].Contains('removed together') then
+        Inc(Result);
+  end;
+
+begin
+  Writeln;
+  Writeln('=== 5x-bis. unused in a project group: two servers, one merge ===');
+  LDir := TPath.Combine(TPath.GetTempPath,
+    'pastree-unused-group-' + IntToStr(GetCurrentProcessId));
+  if TDirectory.Exists(LDir) then
+    TDirectory.Delete(LDir, True);
+  TDirectory.CreateDirectory(LDir);
+  WriteFile('GA.dpr', 'program GA;'#13#10 +
+    'uses GShared, GOnlyA, GUsedA, TA, TB;'#13#10'begin'#13#10 +
+    '  UsedByA;'#13#10'  OnlyA;'#13#10'  UseA;'#13#10'  APr;'#13#10 +
+    '  BPr;'#13#10'end.'#13#10);
+  WriteFile('GB.dpr', 'program GB;'#13#10'uses GShared, GUsedA, GOrphan;' +
+    #13#10'begin'#13#10'  UsedByB;'#13#10'  UsedInB;'#13#10'end.'#13#10);
+  WriteFile('GShared.pas', 'unit GShared;'#13#10'interface'#13#10 +
+    'procedure UsedByA;'#13#10'procedure UsedByB;'#13#10 +
+    'procedure UsedByNone;'#13#10'procedure UsedInB;'#13#10 +
+    'implementation'#13#10'uses GUnusedU, GSome;'#13#10 +
+    'procedure UsedByA; begin end;'#13#10 +
+    'procedure UsedByB; begin end;'#13#10 +
+    'procedure UsedByNone; begin end;'#13#10 +
+    'procedure UsedInB; begin {$IFDEF GB} SomeP; {$ENDIF} end;'#13#10 +
+    'end.'#13#10);
+  WriteFile('GUnusedU.pas', 'unit GUnusedU;'#13#10'interface'#13#10 +
+    'procedure U;'#13#10'implementation'#13#10'procedure U; begin end;' +
+    #13#10'end.'#13#10);
+  WriteFile('GSome.pas', 'unit GSome;'#13#10'interface'#13#10 +
+    'procedure SomeP;'#13#10'implementation'#13#10 +
+    'procedure SomeP; begin end;'#13#10'end.'#13#10);
+  WriteFile('GOnlyA.pas', 'unit GOnlyA;'#13#10'interface'#13#10 +
+    'procedure OnlyA;'#13#10'implementation'#13#10'uses GUnusedU;'#13#10 +
+    'procedure OnlyA; begin end;'#13#10'end.'#13#10);
+  WriteFile('GUsedA.pas', 'unit GUsedA;'#13#10'interface'#13#10 +
+    'procedure UseA;'#13#10'implementation'#13#10 +
+    'procedure UseA; begin end;'#13#10'end.'#13#10);
+  WriteFile('GOrphan.pas', 'unit GOrphan;'#13#10'interface'#13#10 +
+    'procedure Orphan;'#13#10'implementation'#13#10 +
+    'procedure Orphan; begin end;'#13#10'end.'#13#10);
+  WriteFile('TA.pas', 'unit TA;'#13#10'interface'#13#10 +
+    'uses TInit;'#13#10'procedure APr;'#13#10'implementation'#13#10 +
+    'procedure APr; begin end;'#13#10'end.'#13#10);
+  WriteFile('TB.pas', 'unit TB;'#13#10'interface'#13#10 +
+    'uses TInit;'#13#10'procedure BPr;'#13#10'implementation'#13#10 +
+    'procedure BPr; begin end;'#13#10'end.'#13#10);
+  WriteFile('TInit.pas', 'unit TInit;'#13#10'interface'#13#10 +
+    'var GInit: Integer;'#13#10'implementation'#13#10'initialization' +
+    #13#10'  GInit := 1;'#13#10'end.'#13#10);
+
+  LSaved := GClient;
+  LA := nil;
+  LB := nil;
+  try
+    LA := NewServer('GA.dpr', nil);
+    LB := NewServer('GB.dpr', ['GB']);
+    LAnsA := ProjectAnswer(LA);
+    LAnsB := ProjectAnswer(LB);
+    Check(HoldsFile(LAnsA, 'GShared.pas') and HoldsFile(LAnsB, 'GShared.pas')
+      and HoldsFile(LAnsA, 'GOnlyA.pas') and
+      not HoldsFile(LAnsB, 'GOnlyA.pas'),
+      'group: `held` names the files each project searched');
+    Check(HasSymbol(LAnsA, 'UsedByB') and HasSymbol(LAnsA, 'UsedByNone') and
+      not HasSymbol(LAnsA, 'UsedByA'),
+      'group: GA alone - UsedByB and UsedByNone are rows, UsedByA is not');
+    Check(HasSymbol(LAnsB, 'UsedByA') and HasSymbol(LAnsB, 'UsedByNone') and
+      not HasSymbol(LAnsB, 'UsedByB'),
+      'group: GB alone - UsedByA and UsedByNone are rows, UsedByB is not');
+    Check(HasEntry(LAnsA, 'GShared.pas', 'GSome') and
+      not HasEntry(LAnsB, 'GShared.pas', 'GSome'),
+      'group: GSome is unused for GA (its use is under GB) only');
+    Check(TInitDoubts(LAnsA) = 0,
+      'group: no together doubt in a group''s first round');
+
+    LAnswers := [LAnsA, LAnsB];
+    LMerged := MergeGroupAnswers(LAnswers);
+    Check(HasSymbol(LMerged, 'UsedByNone'),
+      'group: UsedByNone, used by neither program, is a row');
+    Check(not HasSymbol(LMerged, 'UsedByA') and
+      not HasSymbol(LMerged, 'UsedByB'),
+      'group: a declaration one program uses is not a row');
+    Check(HasEntry(LMerged, 'GShared.pas', 'GUnusedU') and
+      not HasEntry(LMerged, 'GShared.pas', 'GSome'),
+      'group: GUnusedU unused in both is a row, GSome (used by GB) is not');
+    Check(HasEntry(LMerged, 'GOnlyA.pas', 'GUnusedU'),
+      'group: a unit only GA holds keeps GA''s verdict');
+    Check(HasUnit(LAnsB, 'GUsedA') and not HasUnit(LAnsA, 'GUsedA') and
+      not HasUnit(LMerged, 'GUsedA'),
+      'group: GUsedA, used by GA only, is no unit nobody uses');
+    Check(HasUnit(LMerged, 'GOrphan'),
+      'group: GOrphan, which nobody uses, is a unit nobody uses');
+
+    // The together check over what the group removes (`removed`).
+    LTogether := AskOf(LA, 'pastree/unusedUses', GroupParams(RemovedOf(
+      ['TA.pas'])));
+    Check((Length(LTogether.Entries) > 0) and (TInitDoubts(LTogether) = 0),
+      'group: removed - TA''s TInit alone, TB''s path keeps it: no doubt');
+    LTogether := AskOf(LA, 'pastree/unusedUses', GroupParams(RemovedOf(
+      ['TA.pas', 'TB.pas'])));
+    Check(TInitDoubts(LTogether) = 2,
+      'group: removed - both TInit entries, each held back');
+    AddTogetherDoubts(LMerged, LTogether);
+    Check(TInitDoubts(LMerged) = 2,
+      'group: the second round''s doubts join the merged rows');
+    Check(Length(GroupRemovedPlaces(LMerged, LAnsB)) <
+      Length(GroupRemovedPlaces(LMerged, LAnsA)),
+      'group: each project weighs only the removals in files it holds');
+  finally
+    GClient := LSaved;
+    LA.Free;
+    LB.Free;
+    if TDirectory.Exists(LDir) then
+      TDirectory.Delete(LDir, True);
+  end;
+end;
+
 { Within a few seconds, the last publish for the file named AFileName (lower
   case, see FindDiagOf) holds AText - or, AWant False, does not; no publish
   at all counts as not holding it. Top level for PumpUntil (E2555). }
@@ -6317,6 +6582,7 @@ begin
       TestFormatting;
       TestCancelHygiene;
       TestUnusedUnits(GExe);
+      TestUnusedGroup(GExe);
       TestIncludeEdits(GExe);
       TestCompilerVersion(GExe);
       // Empties the server log: after every section that reads it back.

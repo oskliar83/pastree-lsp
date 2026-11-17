@@ -49,7 +49,8 @@ uses
   System.SysUtils,   // TProc, for LspSetSessionRestartListener
   ToolsAPI,
   PasTreeIdePlugin.FormatText,    // TFormatValues, TFormatEdit
-  PasTreeIdePlugin.OutlineRows;   // TLspOutlineRow and the table reader
+  PasTreeIdePlugin.OutlineRows,   // TLspOutlineRow and the table reader
+  PasTreeIdePlugin.UnusedRows;    // the Unused rows, their reader, the group merge
 
 type
   /// <summary>
@@ -566,78 +567,6 @@ type
     OldText, NewText: string;
   end;
 
-  /// <summary>
-  /// An unused `uses` entry: its name at Row/Col (Len chars), the section
-  /// it is in, why removing it may be wrong (Doubts - such an entry is
-  /// shown, never removed) and why no edit removes it (Refused, '' when an
-  /// edit does).
-  /// </summary>
-  TLspUnusedEntry = record
-    FilePath: string;
-    Row, Col, Len: Integer;
-    UnitName, Section: string;
-    Doubts: TArray<string>;
-    Refused: string;
-    TypeSpans: TArray<Integer>;
-    // `afterRows` (0.89.14): the unused declarations the entry is needed
-    // only by - it goes with them, never removed alone. nil otherwise.
-    By: TArray<string>;
-  end;
-
-  /// <summary>A `uses` entry naming a unit nobody uses. IsProgram: the
-  /// .dpr/.dpk's, which goes with the unit when it leaves the project.
-  /// </summary>
-  TLspListedBy = record
-    FilePath: string;
-    Row, Col, Len: Integer;
-    Note: string;
-    IsProgram: Boolean;
-    TypeSpans: TArray<Integer>;
-  end;
-
-  /// <summary>A project unit nobody uses: its name in its own header.</summary>
-  TLspUnreferencedEntry = record
-    FilePath: string;
-    Row, Col, Len: Integer;
-    UnitName: string;
-    Doubts: TArray<string>;
-    TypeSpans: TArray<Integer>;
-    ListedBy: TArray<TLspListedBy>;
-  end;
-
-  /// <summary>A declaration nothing uses (pastree/unusedSymbols): its name
-  /// at Row/Col (Len chars), Name qualified by its types, Kind in prose
-  /// ("function", "field"), and where the index may be wrong (Doubts).
-  /// </summary>
-  /// <summary>Where an only-assigned row is written: IDE 1-based.</summary>
-  TLspWriteSite = record
-    FilePath: string;
-    Row, Col: Integer;
-    Computed: Boolean;
-  end;
-
-  TLspUnusedSymbol = record
-    FilePath: string;
-    Row, Col, Len: Integer;
-    Name, Kind: string;
-    Doubts: TArray<string>;
-    // A row made by rows (server 0.89.2): why it is one - "used only by
-    // unused X - it goes with them", "only assigned (...), never read"; ''
-    // for one nothing uses.
-    Why: string;
-    // Its kind of row made by rows: 'usedOnlyByUnused', 'onlyAssigned', ''.
-    How: string;
-    TypeSpans: TArray<Integer>;
-    // The rows using it, qualified ('' for itself) - they go with it.
-    By: TArray<string>;
-    // An only-assigned row's assignments: where the name is written (moved
-    // with the edits like the row) and whether code computes the value.
-    WriteSites: TArray<TLspWriteSite>;
-    // Why Remove cannot take it out (pastree/symbolsRemoval's refusal,
-    // kept for the rest of the tab's life); '' while none is known.
-    Refused: string;
-  end;
-
   /// <summary>pastree/symbolsRemoval: the deletions, the indices of the
   /// rows they take out (the asked ones and what goes with them) and the
   /// asked rows refused - Row an index into the rows sent.</summary>
@@ -654,21 +583,6 @@ type
 
   TLspSymbolsRemovalProc = reference to procedure(ASuccess: Boolean;
     const AAnswer: TLspSymbolsRemovalAnswer; const AError: string);
-
-  /// <summary>Any of the three answers: Entries for unusedUses, Units for
-  /// unreferencedUnits, Symbols and Skipped ("105 published members") for
-  /// unusedSymbols. ProjectFile is the .dproj of the server that answered.
-  /// </summary>
-  TLspUnusedAnswer = record
-    ProjectFile: string;
-    Entries: TArray<TLspUnusedEntry>;
-    Units: TArray<TLspUnreferencedEntry>;
-    Symbols: TArray<TLspUnusedSymbol>;
-    Skipped: TArray<string>;
-  end;
-
-  TLspUnusedProc = reference to procedure(ASuccess: Boolean;
-    const AAnswer: TLspUnusedAnswer; const AError: string);
 
   /// <summary>A unit of pastree/importGraph's answer.</summary>
   TLspImportUnit = record
@@ -1271,6 +1185,40 @@ procedure LspUsesRemoval(const AFileName: string;
 procedure LspSymbolsRemoval(const AFileName: string;
   const ARows: TArray<TLspUnusedSymbol>; const ARemove: TArray<Integer>;
   const AOnDone: TLspSymbolsRemovalProc);
+
+{ GROUP MODE of Find All > Unused... (0.93.0): the questions above asked of
+  ONE project's server, named by its .dproj, rather than of a file's owner -
+  the plugin asks every project of the group and merges (UnusedRows). }
+
+/// <summary>
+/// The projects a group-wide question goes to: AFileName's owner first,
+/// then the ticked AProjectFiles of the group (ChooseGroupScope), each
+/// given a session if it had none - its server starts with the first
+/// request. The .dproj paths, the owner's included.
+/// </summary>
+function LspGroupProjectFiles(const AFileName: string;
+  const AProjectFiles: TArray<string>): TArray<string>;
+
+/// <summary>pastree/unusedSymbols, unusedUses or unreferencedUnits
+/// (AMethod) of AProjectFile's server, scope 'project', with `group` -
+/// `held` in the answer; ARemoved: unusedUses' `removed`.</summary>
+procedure LspUnusedOfProject(const AProjectFile, AMethod, AFileName: string;
+  AAfterRows: Boolean; const ARemoved: TArray<TLspUnusedPlace>;
+  const AOnDone: TLspUnusedProc);
+
+/// <summary>pastree/usesRemoval of AProjectFile's server.</summary>
+procedure LspUsesRemovalOfProject(const AProjectFile: string;
+  const AFiles: TArray<TLspRemovalFile>; const AOnDone: TLspUsesRemovalProc);
+
+/// <summary>pastree/symbolsRemoval of AProjectFile's server.</summary>
+procedure LspSymbolsRemovalOfProject(const AProjectFile: string;
+  const ARows: TArray<TLspUnusedSymbol>; const ARemove: TArray<Integer>;
+  const AOnDone: TLspSymbolsRemovalProc);
+
+/// <summary>LspFilesChangedOnDisk told to each of AProjectFiles' servers
+/// - a file a group shares is held by several.</summary>
+procedure LspFilesChangedOnDiskOfProjects(const AProjectFiles,
+  APaths: TArray<string>);
 
 /// <summary>
 /// The .dproj of the project that would answer for AFileName - the owner,
@@ -1927,7 +1875,8 @@ type
       AImplementation: Boolean; const AOnDone: TLspUseUnitProc);
     /// <summary>pastree/unusedUses or pastree/unreferencedUnits.</summary>
     procedure UnusedUnits(const AMethod, AScope, AFileName: string;
-      const AOnDone: TLspUnusedProc; AAfterRows: Boolean = False);
+      const AOnDone: TLspUnusedProc; AAfterRows: Boolean = False;
+      AGroup: Boolean = False; const ARemoved: TArray<TLspUnusedPlace> = nil);
     /// <summary>pastree/importGraph.</summary>
     procedure ImportGraph(const AFileName: string; ARow, ACol: Integer;
       const ARoot: string; const AOnDone: TLspImportGraphProc);
@@ -5551,149 +5500,14 @@ begin
     end);
 end;
 
-{ A Location object's file, start (IDE 1-based) and width - the rows of
-  pastree/unusedUses and unreferencedUnits are names on one line. }
-function ReadUnusedLocation(AObj: TJSONObject; out APath: string;
-  out ARow, ACol, ALen: Integer): Boolean;
-var
-  LLine, LChar, LEndChar: Integer;
-begin
-  APath := LspUriToPath(AObj.GetValue<string>('uri', ''));
-  LLine := AObj.GetValue<Integer>('range.start.line', -1);
-  LChar := AObj.GetValue<Integer>('range.start.character', -1);
-  LEndChar := AObj.GetValue<Integer>('range.end.character', LChar);
-  Result := (APath <> '') and (LLine >= 0) and (LChar >= 0);
-  if not Result then
-    Exit;
-  LspToIde(LLine, LChar, ARow, ACol);
-  ALen := LEndChar - LChar;
-end;
-
-function ReadStrings(AObj: TJSONObject; const AName: string): TArray<string>;
-var
-  LArr: TJSONArray;
-begin
-  Result := nil;
-  if AObj.TryGetValue<TJSONArray>(AName, LArr) then
-    for var LItem in LArr do
-      Result := Result + [LItem.Value];
-end;
-
-// An only-assigned row's `writeSites`.
-function ReadWriteSites(AObj: TJSONObject): TArray<TLspWriteSite>;
-var
-  LArr: TJSONArray;
-  LSite: TLspWriteSite;
-begin
-  Result := nil;
-  if not AObj.TryGetValue<TJSONArray>('writeSites', LArr) then
-    Exit;
-  for var LValue in LArr do
-  begin
-    if not (LValue is TJSONObject) then
-      Continue;
-    LSite := Default(TLspWriteSite);
-    LSite.FilePath := LspUriToPath(LValue.GetValue<string>('uri', ''));
-    LspToIde(LValue.GetValue<Integer>('line', 0),
-      LValue.GetValue<Integer>('character', 0), LSite.Row, LSite.Col);
-    LSite.Computed := LValue.GetValue<Boolean>('computed', False);
-    Result := Result + [LSite];
-  end;
-end;
-
-function ParseUnusedAnswer(AResult: TJSONValue): TLspUnusedAnswer;
-var
-  LArr, LListed: TJSONArray;
-  LObj: TJSONObject;
-  LEntry: TLspUnusedEntry;
-  LUnit: TLspUnreferencedEntry;
-  LBy: TLspListedBy;
-  LSymbol: TLspUnusedSymbol;
-  LSymbols: Integer;
-begin
-  Result := Default(TLspUnusedAnswer);
-  LSymbols := 0;
-  if not (AResult is TJSONObject) then
-    Exit;
-  if AResult.TryGetValue<TJSONArray>('skipped', LArr) then
-    for var LValue in LArr do
-      if (LValue is TJSONObject) and
-         (LValue.GetValue<Integer>('count', 0) > 0) then
-        Result.Skipped := Result.Skipped + [Format('%d %s',
-          [LValue.GetValue<Integer>('count', 0),
-           LValue.GetValue<string>('what', '')])];
-  if AResult.TryGetValue<TJSONArray>('rows', LArr) then
-    for var LValue in LArr do
-    begin
-      if not (LValue is TJSONObject) then
-        Continue;
-      LObj := TJSONObject(LValue);
-      if LObj.GetValue('kind') <> nil then
-      begin
-        LSymbol := Default(TLspUnusedSymbol);
-        if not ReadUnusedLocation(LObj, LSymbol.FilePath, LSymbol.Row,
-          LSymbol.Col, LSymbol.Len) then
-          Continue;
-        LSymbol.Name := LObj.GetValue<string>('name', '');
-        LSymbol.Kind := LObj.GetValue<string>('kind', '');
-        LSymbol.Doubts := ReadStrings(LObj, 'doubts');
-        LSymbol.Why := LObj.GetValue<string>('why', '');
-        LSymbol.How := LObj.GetValue<string>('how', '');
-        LSymbol.TypeSpans := ReadIntArray(LObj, 'typeSpans');
-        LSymbol.By := ReadStrings(LObj, 'by');
-        LSymbol.WriteSites := ReadWriteSites(LObj);
-        // Thousands of rows on a large project: grown by halves, not by one.
-        if LSymbols = Length(Result.Symbols) then
-          SetLength(Result.Symbols, LSymbols + LSymbols div 2 + 16);
-        Result.Symbols[LSymbols] := LSymbol;
-        Inc(LSymbols);
-      end
-      else if LObj.TryGetValue<TJSONArray>('listedBy', LListed) then
-      begin
-        LUnit := Default(TLspUnreferencedEntry);
-        if not ReadUnusedLocation(LObj, LUnit.FilePath, LUnit.Row, LUnit.Col,
-          LUnit.Len) then
-          Continue;
-        LUnit.UnitName := LObj.GetValue<string>('unitName', '');
-        LUnit.Doubts := ReadStrings(LObj, 'doubts');
-        LUnit.TypeSpans := ReadIntArray(LObj, 'typeSpans');
-        for var LByValue in LListed do
-        begin
-          LBy := Default(TLspListedBy);
-          if not (LByValue is TJSONObject) or
-             not ReadUnusedLocation(TJSONObject(LByValue), LBy.FilePath,
-             LBy.Row, LBy.Col, LBy.Len) then
-            Continue;
-          LBy.Note := LByValue.GetValue<string>('note', '');
-          LBy.IsProgram := LByValue.GetValue<Boolean>('program', False);
-          LBy.TypeSpans := ReadIntArray(TJSONObject(LByValue), 'typeSpans');
-          LUnit.ListedBy := LUnit.ListedBy + [LBy];
-        end;
-        Result.Units := Result.Units + [LUnit];
-      end
-      else
-      begin
-        LEntry := Default(TLspUnusedEntry);
-        if not ReadUnusedLocation(LObj, LEntry.FilePath, LEntry.Row,
-          LEntry.Col, LEntry.Len) then
-          Continue;
-        LEntry.UnitName := LObj.GetValue<string>('unitName', '');
-        LEntry.Section := LObj.GetValue<string>('section', '');
-        LEntry.Doubts := ReadStrings(LObj, 'doubts');
-        LEntry.Refused := LObj.GetValue<string>('refused', '');
-        LEntry.By := ReadStrings(LObj, 'by');
-        LEntry.TypeSpans := ReadIntArray(LObj, 'typeSpans');
-        Result.Entries := Result.Entries + [LEntry];
-      end;
-    end;
-  SetLength(Result.Symbols, LSymbols);
-end;
-
 procedure TLspSession.UnusedUnits(const AMethod, AScope, AFileName: string;
-  const AOnDone: TLspUnusedProc; AAfterRows: Boolean);
+  const AOnDone: TLspUnusedProc; AAfterRows, AGroup: Boolean;
+  const ARemoved: TArray<TLspUnusedPlace>);
 var
-  LParams, LDoc: TJSONObject;
+  LParams, LDoc, LPlace: TJSONObject;
+  LRemoved: TJSONArray;
   LProjectFile: string;
+  LLine, LChar: Integer;
 begin
   if not EnsureSession then
   begin
@@ -5711,6 +5525,24 @@ begin
     LParams.AddPair('scope', AScope);
   if AAfterRows then
     LParams.AddPair('afterRows', TJSONBool.Create(True));
+  // A group's question (0.93.0): `held` in the answer, and the together
+  // check over the entries the group removes when ARemoved is given.
+  if AGroup then
+    LParams.AddPair('group', TJSONBool.Create(True));
+  if ARemoved <> nil then
+  begin
+    LRemoved := TJSONArray.Create;
+    for var LP in ARemoved do
+    begin
+      LPlace := TJSONObject.Create;
+      LPlace.AddPair('uri', PathToLspUri(LP.FilePath));
+      IdeToLsp(LP.Row, LP.Col, LLine, LChar);
+      LPlace.AddPair('line', TJSONNumber.Create(LLine));
+      LPlace.AddPair('character', TJSONNumber.Create(LChar));
+      LRemoved.AddElement(LPlace);
+    end;
+    LParams.AddPair('removed', LRemoved);
+  end;
   LProjectFile := FProjectFile;
   FClient.Request(AMethod, LParams,
     procedure(ASuccess: Boolean; AResult: TJSONValue; const AError: string)
@@ -7986,6 +7818,92 @@ begin
     Exit;
   end;
   LSession.SymbolsRemoval(ARows, ARemove, AOnDone);
+end;
+
+function LspGroupProjectFiles(const AFileName: string;
+  const AProjectFiles: TArray<string>): TArray<string>;
+begin
+  Result := nil;
+  if not Assigned(GPool) then
+    Exit;
+  // The ticked projects of the group, the owner first - see GroupTargets.
+  for var LSession in GPool.GroupTargets(SessionForRequest(AFileName),
+    AProjectFiles) do
+    Result := Result + [LSession.ProjectFile];
+end;
+
+function SessionOfProject(const AProjectFile: string): TLspSession;
+begin
+  Result := nil;
+  if Assigned(GPool) then
+    Result := GPool.SessionByProjectFile(AProjectFile);
+end;
+
+procedure LspUnusedOfProject(const AProjectFile, AMethod, AFileName: string;
+  AAfterRows: Boolean; const ARemoved: TArray<TLspUnusedPlace>;
+  const AOnDone: TLspUnusedProc);
+var
+  LSession: TLspSession;
+  LScope: string;
+begin
+  LSession := SessionOfProject(AProjectFile);
+  if LSession = nil then
+  begin
+    AOnDone(False, Default(TLspUnusedAnswer),
+      ExtractFileName(AProjectFile) + ' has no LSP session');
+    Exit;
+  end;
+  LScope := 'project';
+  if AMethod = 'pastree/unreferencedUnits' then
+    LScope := '';
+  LSession.UnusedUnits(AMethod, LScope, AFileName, AOnDone, AAfterRows, True,
+    ARemoved);
+end;
+
+procedure LspUsesRemovalOfProject(const AProjectFile: string;
+  const AFiles: TArray<TLspRemovalFile>; const AOnDone: TLspUsesRemovalProc);
+var
+  LSession: TLspSession;
+begin
+  LSession := SessionOfProject(AProjectFile);
+  if LSession = nil then
+  begin
+    AOnDone(False, Default(TLspUsesRemovalAnswer),
+      ExtractFileName(AProjectFile) + ' has no LSP session');
+    Exit;
+  end;
+  LSession.UsesRemoval(AFiles, AOnDone);
+end;
+
+procedure LspSymbolsRemovalOfProject(const AProjectFile: string;
+  const ARows: TArray<TLspUnusedSymbol>; const ARemove: TArray<Integer>;
+  const AOnDone: TLspSymbolsRemovalProc);
+var
+  LSession: TLspSession;
+begin
+  LSession := SessionOfProject(AProjectFile);
+  if LSession = nil then
+  begin
+    AOnDone(False, Default(TLspSymbolsRemovalAnswer),
+      ExtractFileName(AProjectFile) + ' has no LSP session');
+    Exit;
+  end;
+  LSession.SymbolsRemoval(ARows, ARemove, AOnDone);
+end;
+
+procedure LspFilesChangedOnDiskOfProjects(const AProjectFiles,
+  APaths: TArray<string>);
+var
+  LSession: TLspSession;
+begin
+  if APaths = nil then
+    Exit;
+  for var LProject in AProjectFiles do
+  begin
+    LSession := SessionOfProject(LProject);
+    if LSession <> nil then
+      LSession.FilesChangedOnDisk(APaths);
+  end;
 end;
 
 procedure LspOutlineTarget(const ARow: TLspOutlineRow;

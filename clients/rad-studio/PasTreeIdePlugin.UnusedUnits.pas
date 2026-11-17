@@ -93,6 +93,23 @@ unit PasTreeIdePlugin.UnusedUnits;
   Kept per Remove: the nodes, the edits and their offsets, the files taken
   out of the project - never an IDE interface, which the user can close
   under us (the Rename tab's lesson, see its unit).
+
+  THE PROJECT GROUP (0.93.0) - the last scope, the only way to see every
+  use (Alex: "the only way to find all references", costly as it is). The
+  dialog offers it for a group of two projects or more; the group scope
+  dialog (Find All References') picks the projects, the owner of the file
+  always among them. Every chosen project's server is asked the same steps
+  with `group: true` - all servers at once, each its steps in turn, under
+  one wait dialog with no per-project line - and the answers are merged by
+  PasTreeIdePlugin.UnusedRows: a row only where every project holding its
+  file finds it unused, a unit nobody uses only where no project holding it
+  reaches it, doubts joined. Then a second round weighs the entries removed
+  together per project over what the GROUP removes (`removed`), not over
+  each project's own rows. The tab is the project's - by file - and so are
+  Remove, Remove All and Revert: each file's edits are asked of one project
+  holding it (the owner when it does, else the first chosen that does), a
+  unit nobody uses leaves every project that lists it, and each server
+  holding a rewritten file is told.
 }
 
 interface
@@ -121,7 +138,8 @@ uses
   PasTreeIdePlugin.LspSession, PasTreeIdePlugin.LspDocuments,
   PasTreeIdePlugin.ResultRows, PasTreeIdePlugin.RenameToolbar,
   PasTreeIdePlugin.WaitDialog, PasTreeIdePlugin.FormModules,
-  PasTreeIdePlugin.UnusedForm, System.RegularExpressions;
+  PasTreeIdePlugin.UnusedForm, PasTreeIdePlugin.UnusedRows,
+  PasTreeIdePlugin.GroupScope, System.RegularExpressions;
 
 const
   // One tab for every part (Alex, 2026-11-14). Without the "PasTree " the
@@ -148,12 +166,18 @@ type
     Encoding: TPasSourceEncoding;
   end;
 
+  // A unit taken out of a project: the file and the .dproj.
+  TUnitOut = record
+    Path: string;
+    Project: string;
+  end;
+
   // One Remove as made: the nodes it took out, its edits (with the offsets
-  // of the forward pass), the units it took out of the project.
+  // of the forward pass), the units it took out of their projects.
   TRemoval = record
     Nodes: TArray<Integer>;
     Edits: TArray<TAppliedEdit>;
-    Units: TArray<string>;
+    Units: TArray<TUnitOut>;
     Before: TLspUnusedAnswer;   // the rows' positions before it, for Revert
   end;
 
@@ -178,6 +202,12 @@ type
     ShownRow: TArray<Pointer>;
     Busy: Boolean;                  // a Remove waits for its edits
     Generation: Integer;            // a new search or a closed tab
+    // The project group (0.93.0): the projects asked, the owner first (nil
+    // for a unit or a project), the group's name, and who holds each file
+    // (lower-cased path -> the projects, in Projects' order).
+    Projects: TArray<string>;
+    GroupName: string;
+    Holders: TDictionary<string, TArray<string>>;
     constructor Create;
     destructor Destroy; override;
     procedure Clear;
@@ -195,10 +225,12 @@ begin
   inherited Create;
   Caption := cMessageGroupName;
   RowNode := TDictionary<Pointer, TArray<Integer>>.Create;
+  Holders := TDictionary<string, TArray<string>>.Create;
 end;
 
 destructor TUnusedTab.Destroy;
 begin
+  Holders.Free;
   RowNode.Free;
   inherited;
 end;
@@ -214,6 +246,9 @@ begin
   ShownRow := nil;
   Busy := False;
   RowNode.Clear;
+  Projects := nil;
+  GroupName := '';
+  Holders.Clear;
 end;
 
 // Makes sure the tab exists; False once the package is going.
@@ -508,6 +543,62 @@ begin
     for var LIdx := 0 to LGroup.ProjectCount - 1 do
       if SameText(LGroup.Projects[LIdx].FileName, AProjectFile) then
         Exit(LGroup.Projects[LIdx]);
+end;
+
+// Whether AProject lists APath among its files.
+function ProjectHasFile(const AProject: IOTAProject;
+  const APath: string): Boolean;
+begin
+  for var LIdx := 0 to AProject.GetModuleCount - 1 do
+    if SameText(AProject.GetModule(LIdx).FileName, APath) then
+      Exit(True);
+  Result := False;
+end;
+
+{ The project whose server computes APath's edits: '' outside the group
+  (the owner of the tab's file answers, as before); in the group the first
+  of the projects asked that holds the file - the owner when it does. }
+function FileProject(const APath: string): string;
+var
+  LHolders: TArray<string>;
+begin
+  Result := '';
+  if (GTab.Projects <> nil) and
+     GTab.Holders.TryGetValue(LowerCase(APath), LHolders) and
+     (LHolders <> nil) then
+    Result := LHolders[0];
+end;
+
+// The projects a unit nobody uses leaves: every project of the group that
+// holds it, else the tab's one project.
+function UnitProjects(const APath: string): TArray<string>;
+begin
+  Result := nil;
+  if GTab.Projects = nil then
+    Result := Result + [GTab.Answer.ProjectFile]
+  else if not GTab.Holders.TryGetValue(LowerCase(APath), Result) then
+    Result := nil;
+end;
+
+// pastree/usesRemoval of AProject's server ('' - the tab file's owner).
+procedure AskUsesRemoval(const AProject: string;
+  const AFiles: TArray<TLspRemovalFile>; const AOnDone: TLspUsesRemovalProc);
+begin
+  if AProject = '' then
+    LspUsesRemoval(GTab.TitleFile, AFiles, AOnDone)
+  else
+    LspUsesRemovalOfProject(AProject, AFiles, AOnDone);
+end;
+
+// pastree/symbolsRemoval of AProject's server ('' - the tab file's owner).
+procedure AskSymbolsRemoval(const AProject: string;
+  const ARows: TArray<TLspUnusedSymbol>; const ARemove: TArray<Integer>;
+  const AOnDone: TLspSymbolsRemovalProc);
+begin
+  if AProject = '' then
+    LspSymbolsRemoval(GTab.TitleFile, ARows, ARemove, AOnDone)
+  else
+    LspSymbolsRemovalOfProject(AProject, ARows, ARemove, AOnDone);
 end;
 
 { -------- the nodes -------- }
@@ -1010,7 +1101,10 @@ begin
   try
     // The title names what was searched, no counts: each part's row below
     // carries its own (0.89.6, Alex - the counts here only repeated them).
-    if GTab.Options.Project then
+    if GTab.Projects <> nil then
+      LTitle := Format('Unused in the group %s (%d projects)',
+        [GTab.GroupName, Length(GTab.Projects)])
+    else if GTab.Options.Project then
       LTitle := 'Unused in ' + ExtractFileName(GTab.Answer.ProjectFile)
     else
       LTitle := 'Unused in ' + ExtractFileName(GTab.TitleFile);
@@ -1204,8 +1298,50 @@ end;
 procedure TellServer(const ADiskPaths: TArray<string>);
 begin
   LspSyncDocuments;
-  if ADiskPaths <> nil then
+  if ADiskPaths = nil then
+    Exit;
+  // In the group a rewritten file is held by several servers: each is told.
+  if GTab.Projects <> nil then
+    LspFilesChangedOnDiskOfProjects(GTab.Projects, ADiskPaths)
+  else
     LspFilesChangedOnDisk(ADiskPaths);
+end;
+
+{ AEdits without the copies of one edit two servers both answered (a file
+  edited by a row of each); nil and AError set when two DIFFERENT edits
+  overlap - no order makes both apply. }
+function DistinctEdits(const AEdits: TArray<TLspUsesEdit>;
+  out AError: string): TArray<TLspUsesEdit>;
+var
+  LSorted: TArray<TAppliedEdit>;
+  LPrev: TLspUsesEdit;
+  LHave: Boolean;
+begin
+  Result := nil;
+  AError := '';
+  LSorted := SortedEdits(AEdits);
+  LHave := False;
+  for var LA in LSorted do
+  begin
+    if LHave and SameText(LA.Edit.FilePath, LPrev.FilePath) then
+    begin
+      if (LA.Edit.Row = LPrev.Row) and (LA.Edit.Col = LPrev.Col) and
+         (LA.Edit.OldText = LPrev.OldText) and
+         (LA.Edit.NewText = LPrev.NewText) then
+        Continue;
+      if (LA.Edit.Row < LPrev.EndRow) or ((LA.Edit.Row = LPrev.EndRow) and
+         (LA.Edit.Col < LPrev.EndCol)) then
+      begin
+        AError := Format('two projects'' edits overlap in %s at line %d. ' +
+          'Nothing was removed. Remove the rows one at a time.',
+          [ExtractFileName(LA.Edit.FilePath), LA.Edit.Row]);
+        Exit(nil);
+      end;
+    end;
+    Result := Result + [LA.Edit];
+    LPrev := LA.Edit;
+    LHave := True;
+  end;
 end;
 
 { What ANodes' Remove asks pastree/usesRemoval for, and the units it takes
@@ -1254,8 +1390,8 @@ begin
         LGoing.AddOrSetValue(LowerCase(GTab.Answer.Units[LIdx].FilePath), True);
       end;
     for var LRemoval in GTab.Removals do
-      for var LPath in LRemoval.Units do
-        LGoing.AddOrSetValue(LowerCase(LPath), True);
+      for var LU in LRemoval.Units do
+        LGoing.AddOrSetValue(LowerCase(LU.Path), True);
     for var LNode in ANodes do
       case NodeKind(LNode, LIdx) of
         nkEntry:
@@ -1354,6 +1490,28 @@ begin
     end);
 end;
 
+// Saves each project AUnits names once.
+procedure SaveProjectsOf(const AUnits: TArray<TUnitOut>);
+var
+  LSaved: TArray<string>;
+  LProject: IOTAProject;
+  LDone: Boolean;
+begin
+  LSaved := nil;
+  for var LU in AUnits do
+  begin
+    LDone := False;
+    for var LS in LSaved do
+      LDone := LDone or SameText(LS, LU.Project);
+    if LDone then
+      Continue;
+    LSaved := LSaved + [LU.Project];
+    LProject := ProjectByFile(LU.Project);
+    if Assigned(LProject) then
+      LProject.Save(False, True);
+  end;
+end;
+
 // Makes one Remove of ANodes with AEdits (the server's, on the text as it
 // is now).
 procedure ApplyRemoval(const ANodes: TArray<Integer>;
@@ -1364,9 +1522,18 @@ var
   LDisk: TArray<string>;
   LError: string;
   LProject: IOTAProject;
+  LUnitOut: TUnitOut;
+  LEdits: TArray<TLspUsesEdit>;
 begin
+  // Two servers may answer the same edit (a group's file held by both).
+  LEdits := DistinctEdits(AEdits, LError);
+  if (LEdits = nil) and (LError <> '') then
+  begin
+    TellUser(LError, mtError);
+    Exit;
+  end;
   LRemoval.Nodes := ANodes;
-  LRemoval.Edits := SortedEdits(AEdits);
+  LRemoval.Edits := SortedEdits(LEdits);
   LRemoval.Units := nil;
   if not ApplyAll(LRemoval.Edits, True, LDisk, LError) then
   begin
@@ -1375,27 +1542,33 @@ begin
   end;
   LRemoval.Before := SnapshotAnswer;
   MoveRows(LRemoval.Edits);
-  if AUnits <> nil then
-  begin
-    LProject := ProjectByFile(GTab.Answer.ProjectFile);
-    if not Assigned(LProject) then
-      LogDiagnostic(ExtractFileName(GTab.Answer.ProjectFile) + ' is not open - ' +
-        'the units stay in it')
-    else
+  // Each unit out of every project listing it - the tab's one project, or
+  // in the group each project holding it that lists the file.
+  for var LPath in AUnits do
+    for var LProjectFile in UnitProjects(LPath) do
     begin
-      for var LPath in AUnits do
-        try
-          LProject.RemoveFile(LPath);
-          LRemoval.Units := LRemoval.Units + [LPath];
-        except
-          on E: Exception do
-            LogDiagnostic(Format('%s could not be taken out of the ' +
-              'project: %s', [ExtractFileName(LPath), E.Message]));
-        end;
-      if LRemoval.Units <> nil then
-        LProject.Save(False, True);
+      LProject := ProjectByFile(LProjectFile);
+      if not Assigned(LProject) then
+      begin
+        LogDiagnostic(ExtractFileName(LProjectFile) + ' is not open - ' +
+          ExtractFileName(LPath) + ' stays in it');
+        Continue;
+      end;
+      if (GTab.Projects <> nil) and not ProjectHasFile(LProject, LPath) then
+        Continue;
+      try
+        LProject.RemoveFile(LPath);
+        LUnitOut.Path := LPath;
+        LUnitOut.Project := LProjectFile;
+        LRemoval.Units := LRemoval.Units + [LUnitOut];
+      except
+        on E: Exception do
+          LogDiagnostic(Format('%s could not be taken out of %s: %s',
+            [ExtractFileName(LPath), ExtractFileName(LProjectFile),
+            E.Message]));
+      end;
     end;
-  end;
+  SaveProjectsOf(LRemoval.Units);
   GTab.Removals := GTab.Removals + [LRemoval];
   LspLogToServer(Format('unused units: Remove %d - %d node(s), %d clause ' +
     'edit(s), %d unit(s) out of the project', [Length(GTab.Removals),
@@ -1406,6 +1579,61 @@ begin
   LNext := NodeAfter(ANodes);
   Report;
   SelectNode(LNext);
+end;
+
+{ pastree/usesRemoval for AFiles, each file asked of the project that
+  computes its edits (FileProject; one request outside the group), the
+  answers joined: AOnDone once, with every edit, refusal and missing name,
+  or the first failure. }
+procedure AskUsesRemovalByProject(const AFiles: TArray<TLspRemovalFile>;
+  const AOnDone: TLspUsesRemovalProc);
+var
+  LProjects: TArray<string>;
+  LBuckets: TArray<TArray<TLspRemovalFile>>;
+  LAt: Integer;
+  LJoined: TLspUsesRemovalAnswer;
+  LOutstanding: Integer;
+  LError: string;
+begin
+  LProjects := nil;
+  LBuckets := nil;
+  for var LF in AFiles do
+  begin
+    LAt := -1;
+    for var LI := 0 to High(LProjects) do
+      if SameText(LProjects[LI], FileProject(LF.FilePath)) then
+        LAt := LI;
+    if LAt < 0 then
+    begin
+      LAt := Length(LProjects);
+      LProjects := LProjects + [FileProject(LF.FilePath)];
+      SetLength(LBuckets, LAt + 1);
+    end;
+    LBuckets[LAt] := LBuckets[LAt] + [LF];
+  end;
+  LJoined := Default(TLspUsesRemovalAnswer);
+  LOutstanding := Length(LProjects);
+  LError := '';
+  for var LI := 0 to High(LProjects) do
+    AskUsesRemoval(LProjects[LI], LBuckets[LI],
+      procedure(ASuccess: Boolean; const AAnswer: TLspUsesRemovalAnswer;
+        const AError: string)
+      begin
+        Dec(LOutstanding);
+        if not ASuccess then
+        begin
+          if LError = '' then
+            LError := AError;
+        end
+        else
+        begin
+          LJoined.Edits := LJoined.Edits + AAnswer.Edits;
+          LJoined.Refused := LJoined.Refused + AAnswer.Refused;
+          LJoined.Missing := LJoined.Missing + AAnswer.Missing;
+        end;
+        if LOutstanding = 0 then
+          AOnDone(LError = '', LJoined, LError);
+      end);
 end;
 
 { The `uses` part of a Remove of ANodes - entries and units nobody uses -
@@ -1435,7 +1663,7 @@ begin
   GTab.Busy := True;
   UpdateButtons;
   LGeneration := GTab.Generation;
-  LspUsesRemoval(GTab.TitleFile, LFiles,
+  AskUsesRemovalByProject(LFiles,
     procedure(ASuccess: Boolean; const AAnswer: TLspUsesRemovalAnswer;
       const AError: string)
     begin
@@ -1512,17 +1740,138 @@ begin
   end;
 end;
 
+{ The declarations' answers of one Remove joined: each project's part
+  (SymbolsPart) adds its edits, and its row indices moved by where its rows
+  start among all those sent; the last calls Done and frees the join. }
+type
+  TSymbolsJoin = class
+    Joined: TLspSymbolsRemovalAnswer;
+    Outstanding: Integer;
+    Error: string;
+    Done: TLspSymbolsRemovalProc;
+  end;
+
+function SymbolsPart(AJoin: TSymbolsJoin;
+  AFrom: Integer): TLspSymbolsRemovalProc;
+begin
+  Result :=
+    procedure(ASuccess: Boolean; const AAnswer: TLspSymbolsRemovalAnswer;
+      const AError: string)
+    var
+      LRefusal: TLspSymbolRefusal;
+    begin
+      Dec(AJoin.Outstanding);
+      if not ASuccess then
+      begin
+        if AJoin.Error = '' then
+          AJoin.Error := AError;
+      end
+      else
+      begin
+        AJoin.Joined.Edits := AJoin.Joined.Edits + AAnswer.Edits;
+        for var LT in AAnswer.Taken do
+          AJoin.Joined.Taken := AJoin.Joined.Taken + [AFrom + LT];
+        for var LR in AAnswer.Refused do
+        begin
+          LRefusal := LR;
+          LRefusal.Row := AFrom + LR.Row;
+          AJoin.Joined.Refused := AJoin.Joined.Refused + [LRefusal];
+        end;
+      end;
+      if AJoin.Outstanding = 0 then
+        try
+          AJoin.Done(AJoin.Error = '', AJoin.Joined, AJoin.Error);
+        finally
+          AJoin.Free;
+        end;
+    end;
+end;
+
+{ What a Remove does with the declarations' answer: ASent and ASentNode the
+  rows sent and their nodes, AAsk the asked indices, AOthers the entries
+  and units of the Remove. The rows it takes - the asked ones and what goes
+  with them - join the Remove, with the entries they free; a refused row
+  keeps its reason as a note and is not offered again. }
+procedure SymbolsAnswered(const ASent: TArray<TLspUnusedSymbol>;
+  const ASentNode, AAsk, AOthers: TArray<Integer>; AGeneration: Integer;
+  ASuccess: Boolean; const AAnswer: TLspSymbolsRemovalAnswer;
+  const AError: string);
+var
+  LTaken, LFreed: TArray<Integer>;
+  LNames: TArray<string>;
+  LSym: Integer;
+begin
+  if not UseTab or (AGeneration <> GTab.Generation) then
+    Exit;
+  GTab.Busy := False;
+  try
+    if not ASuccess then
+    begin
+      UpdateButtons;
+      TellUser('Nothing was removed: ' + AError, mtError);
+      Exit;
+    end;
+    for var LR in AAnswer.Refused do
+      if (LR.Row >= 0) and (LR.Row <= High(ASentNode)) then
+      begin
+        NodeKind(ASentNode[LR.Row], LSym);
+        GTab.Answer.Symbols[LSym].Refused := LR.Reason;
+      end;
+    LTaken := nil;
+    LNames := nil;
+    for var LT in AAnswer.Taken do
+      if (LT >= 0) and (LT <= High(ASentNode)) then
+      begin
+        LTaken := LTaken + [ASentNode[LT]];
+        LNames := LNames + [ASent[LT].Name];
+      end;
+    LspLogToServer(Format('unused: Remove - %d declaration(s) asked, %d ' +
+      'taken with what goes with them, %d refused, %d edit(s)',
+      [Length(AAsk), Length(LTaken), Length(AAnswer.Refused),
+      Length(AAnswer.Edits)]));
+    if (LTaken = nil) and (AOthers = nil) then
+    begin
+      // Nothing to remove: say why when one row was asked.
+      UpdateButtons;
+      Report;
+      if Length(AAsk) = 1 then
+        SelectNode(ASentNode[AAsk[0]]);
+      if (Length(AAsk) = 1) and (AAnswer.Refused <> nil) then
+        TellUser(ASent[AAsk[0]].Name + ' cannot be removed: ' +
+          AAnswer.Refused[0].Reason, mtInformation);
+      Exit;
+    end;
+    LFreed := FreedEntries(LNames);
+    StartUsesRemoval(AOthers + LFreed + LTaken, LFreed, AAnswer.Edits);
+  except
+    on E: Exception do
+    begin
+      UpdateButtons;
+      LogDiagnostic(Format('Remove failed: %s: %s', [E.ClassName,
+        E.Message]));
+    end;
+  end;
+end;
+
 { A Remove of ANodes. Declarations among them go first to
   pastree/symbolsRemoval with every declaration row left (what goes with
-  one is found among them), and the answer decides: the rows it takes - the
-  asked ones and what goes with them - join the Remove, with the entries
-  they free; a refused row keeps its reason as a note and is not offered
-  again. Then the entries and units, as before. }
+  one is found among them), and the answer decides (SymbolsAnswered). Then
+  the entries and units, as before. In the group the rows go by the
+  project that computes their file's edits (FileProject): each server gets
+  the rows of its files and the asked ones among them, and the answers are
+  joined (SymbolsPart) - laid end to end, bucket by bucket, so the joined
+  indices are into the rows sent. Outside the group: one bucket, ''. }
 procedure StartRemoval(const ANodes: TArray<Integer>);
 var
   LAsked, LOthers, LSentNode, LAsk: TArray<Integer>;
   LSent: TArray<TLspUnusedSymbol>;
-  LGeneration, LIdx: Integer;
+  LGeneration, LIdx, LAt: Integer;
+  LProjects: TArray<string>;
+  LBucketRows: TArray<TArray<TLspUnusedSymbol>>;
+  LBucketNodes, LBucketAsk: TArray<TArray<Integer>>;
+  LBucketFrom: TArray<Integer>;
+  LJoin: TSymbolsJoin;
+  LProject: string;
 begin
   LAsked := nil;
   LOthers := nil;
@@ -1536,80 +1885,64 @@ begin
     StartUsesRemoval(ANodes, nil, nil);
     Exit;
   end;
-  LSent := nil;
-  LSentNode := nil;
-  LAsk := nil;
+  LProjects := nil;
+  LBucketRows := nil;
+  LBucketNodes := nil;
   for var LI := 0 to High(GTab.Answer.Symbols) do
     if not NodeRemoved(SymbolNode(LI)) then
     begin
-      for var LA in LAsked do
-        if LA = SymbolNode(LI) then
-          LAsk := LAsk + [Length(LSent)];
-      LSent := LSent + [GTab.Answer.Symbols[LI]];
-      LSentNode := LSentNode + [SymbolNode(LI)];
+      LProject := FileProject(GTab.Answer.Symbols[LI].FilePath);
+      LAt := -1;
+      for var LB := 0 to High(LProjects) do
+        if SameText(LProjects[LB], LProject) then
+          LAt := LB;
+      if LAt < 0 then
+      begin
+        LAt := Length(LProjects);
+        LProjects := LProjects + [LProject];
+        SetLength(LBucketRows, LAt + 1);
+        SetLength(LBucketNodes, LAt + 1);
+      end;
+      LBucketRows[LAt] := LBucketRows[LAt] + [GTab.Answer.Symbols[LI]];
+      LBucketNodes[LAt] := LBucketNodes[LAt] + [SymbolNode(LI)];
     end;
+  LSent := nil;
+  LSentNode := nil;
+  LAsk := nil;
+  SetLength(LBucketAsk, Length(LProjects));
+  SetLength(LBucketFrom, Length(LProjects));
+  for var LB := 0 to High(LProjects) do
+  begin
+    LBucketFrom[LB] := Length(LSent);
+    for var LR := 0 to High(LBucketNodes[LB]) do
+      for var LA in LAsked do
+        if LA = LBucketNodes[LB][LR] then
+        begin
+          LBucketAsk[LB] := LBucketAsk[LB] + [LR];
+          LAsk := LAsk + [Length(LSent) + LR];
+        end;
+    LSent := LSent + LBucketRows[LB];
+    LSentNode := LSentNode + LBucketNodes[LB];
+  end;
   GTab.Busy := True;
   UpdateButtons;
   LGeneration := GTab.Generation;
-  LspSymbolsRemoval(GTab.TitleFile, LSent, LAsk,
+  LJoin := TSymbolsJoin.Create;
+  LJoin.Done :=
     procedure(ASuccess: Boolean; const AAnswer: TLspSymbolsRemovalAnswer;
       const AError: string)
-    var
-      LTaken, LFreed: TArray<Integer>;
-      LNames: TArray<string>;
-      LSym: Integer;
     begin
-      if not UseTab or (LGeneration <> GTab.Generation) then
-        Exit;
-      GTab.Busy := False;
-      try
-        if not ASuccess then
-        begin
-          UpdateButtons;
-          TellUser('Nothing was removed: ' + AError, mtError);
-          Exit;
-        end;
-        for var LR in AAnswer.Refused do
-          if (LR.Row >= 0) and (LR.Row <= High(LSentNode)) then
-          begin
-            NodeKind(LSentNode[LR.Row], LSym);
-            GTab.Answer.Symbols[LSym].Refused := LR.Reason;
-          end;
-        LTaken := nil;
-        LNames := nil;
-        for var LT in AAnswer.Taken do
-          if (LT >= 0) and (LT <= High(LSentNode)) then
-          begin
-            LTaken := LTaken + [LSentNode[LT]];
-            LNames := LNames + [LSent[LT].Name];
-          end;
-        LspLogToServer(Format('unused: Remove - %d declaration(s) asked, %d ' +
-          'taken with what goes with them, %d refused, %d edit(s)',
-          [Length(LAsk), Length(LTaken), Length(AAnswer.Refused),
-          Length(AAnswer.Edits)]));
-        if (LTaken = nil) and (LOthers = nil) then
-        begin
-          // Nothing to remove: say why when one row was asked.
-          UpdateButtons;
-          Report;
-          if Length(LAsk) = 1 then
-            SelectNode(LSentNode[LAsk[0]]);
-          if (Length(LAsk) = 1) and (AAnswer.Refused <> nil) then
-            TellUser(LSent[LAsk[0]].Name + ' cannot be removed: ' +
-              AAnswer.Refused[0].Reason, mtInformation);
-          Exit;
-        end;
-        LFreed := FreedEntries(LNames);
-        StartUsesRemoval(LOthers + LFreed + LTaken, LFreed, AAnswer.Edits);
-      except
-        on E: Exception do
-        begin
-          UpdateButtons;
-          LogDiagnostic(Format('Remove failed: %s: %s', [E.ClassName,
-            E.Message]));
-        end;
-      end;
-    end);
+      SymbolsAnswered(LSent, LSentNode, LAsk, LOthers, LGeneration, ASuccess,
+        AAnswer, AError);
+    end;
+  for var LB := 0 to High(LProjects) do
+    if LBucketAsk[LB] <> nil then
+      Inc(LJoin.Outstanding);
+  // Counted first: an answer can come back before the next request goes.
+  for var LB := 0 to High(LProjects) do
+    if LBucketAsk[LB] <> nil then
+      AskSymbolsRemoval(LProjects[LB], LBucketRows[LB], LBucketAsk[LB],
+        SymbolsPart(LJoin, LBucketFrom[LB]));
 end;
 
 { The nodes of the row selected in the tree - one, or every node under a
@@ -1705,33 +2038,29 @@ begin
     Exit;
   try
     LRemoval := GTab.Removals[High(GTab.Removals)];
-    if LRemoval.Units <> nil then
-    begin
-      LProject := ProjectByFile(GTab.Answer.ProjectFile);
-      if not Assigned(LProject) then
+    for var LU in LRemoval.Units do
+      if not Assigned(ProjectByFile(LU.Project)) then
       begin
-        TellUser(ExtractFileName(GTab.Answer.ProjectFile) + ' is not open. ' +
+        TellUser(ExtractFileName(LU.Project) + ' is not open. ' +
           'Nothing was reverted.', mtError);
         Exit;
       end;
-    end;
     if not ApplyAll(LRemoval.Edits, False, LDisk, LError) then
     begin
       TellUser(LError, mtError);
       Exit;
     end;
-    if LRemoval.Units <> nil then
-    begin
-      for var LPath in LRemoval.Units do
-        try
-          LProject.AddFile(LPath, True);
-        except
-          on E: Exception do
-            LogDiagnostic(Format('%s could not be added back: %s',
-              [ExtractFileName(LPath), E.Message]));
-        end;
-      LProject.Save(False, True);
-    end;
+    for var LU in LRemoval.Units do
+      try
+        LProject := ProjectByFile(LU.Project);
+        LProject.AddFile(LU.Path, True);
+      except
+        on E: Exception do
+          LogDiagnostic(Format('%s could not be added back to %s: %s',
+            [ExtractFileName(LU.Path), ExtractFileName(LU.Project),
+            E.Message]));
+      end;
+    SaveProjectsOf(LRemoval.Units);
     // The rows back where they were before that Remove.
     GTab.Answer := LRemoval.Before;
     SetLength(GTab.Removals, Length(GTab.Removals) - 1);
@@ -1798,12 +2127,21 @@ var
     Steps: TArray<TUnusedStep>;
     Merged: TLspUnusedAnswer;
     Start: UInt64;
+    // The project group (0.93.0): the projects asked, owner first, each
+    // one's answer (its steps joined), how many are still answering, the
+    // first failure, the group's name.
+    Projects: TArray<string>;
+    PerProject: TArray<TLspUnusedAnswer>;
+    Outstanding: Integer;
+    Failure: string;
+    GroupName: string;
   end;
 
 procedure EndSearch(const AError: string);
 begin
   GSearching := False;
   GSearch.Merged := Default(TLspUnusedAnswer);
+  GSearch.PerProject := nil;
   CloseWaitDialog;
   LogDiagnostic(AError);
 end;
@@ -1845,17 +2183,39 @@ procedure ShowResults;
 var
   LAnswer: TLspUnusedAnswer;
   LOptions: TUnusedOptions;
-  LFile: string;
+  LFile, LGroupName, LScope: string;
+  LProjects: TArray<string>;
+  LHolders: TDictionary<string, TArray<string>>;
+  LHeldBy: TArray<TPair<string, TArray<string>>>;
+  LList: TArray<string>;
 begin
   LAnswer := GSearch.Merged;
   LOptions := GSearch.Options;
   LFile := GSearch.FileName;
+  LProjects := GSearch.Projects;
+  LGroupName := GSearch.GroupName;
+  // Who holds each file, for the Removes: the projects in the order asked.
+  LHolders := TDictionary<string, TArray<string>>.Create;
+  for var LP := 0 to High(GSearch.PerProject) do
+    for var LPath in GSearch.PerProject[LP].Held do
+    begin
+      if not LHolders.TryGetValue(LowerCase(LPath), LList) then
+        LList := nil;
+      LHolders.AddOrSetValue(LowerCase(LPath), LList + [LProjects[LP]]);
+    end;
+  LHeldBy := LHolders.ToArray;
+  LHolders.Free;
   GSearch.Merged := Default(TLspUnusedAnswer);
+  GSearch.PerProject := nil;
   GSearching := False;
+  if LProjects <> nil then
+    LScope := Format('group (%d projects)', [Length(LProjects)])
+  else
+    LScope := IfThen(LOptions.Project, 'project', 'unit');
   LspLogToServer(Format('unused: %s search, %d step(s) - %d ' +
     'declarations, %d entries, %d units nobody uses, in %d ms',
-    [IfThen(LOptions.Project, 'project', 'unit'), Length(GSearch.Steps),
-    Length(LAnswer.Symbols), Length(LAnswer.Entries), Length(LAnswer.Units),
+    [LScope, Length(GSearch.Steps), Length(LAnswer.Symbols),
+    Length(LAnswer.Entries), Length(LAnswer.Units),
     TThread.GetTickCount64 - GSearch.Start]));
   if not LOptions.Doubts then
     LAnswer := WithoutDoubts(LAnswer);
@@ -1869,6 +2229,10 @@ begin
       GTab.Options := LOptions;
       GTab.Answer := LAnswer;
       GTab.TitleFile := LFile;
+      GTab.Projects := LProjects;
+      GTab.GroupName := LGroupName;
+      for var LPair in LHeldBy do
+        GTab.Holders.AddOrSetValue(LPair.Key, LPair.Value);
       Report;
       // A new search only: after a Remove or a Revert the selection
       // (SelectNode) decides what is in view.
@@ -1920,6 +2284,9 @@ begin
   if GSearch.Steps = nil then
     Exit;
   GSearch.Merged := Default(TLspUnusedAnswer);
+  GSearch.Projects := nil;
+  GSearch.PerProject := nil;
+  GSearch.GroupName := '';
   GSearch.Start := TThread.GetTickCount64;
   GSearching := True;
   if AOptions.Project then
@@ -1931,10 +2298,197 @@ begin
   SearchStep(0);
 end;
 
+{ -------- the project group -------- }
+
+const
+  cStepMethod: array[TUnusedStep] of string = ('pastree/unusedSymbols',
+    'pastree/unusedUses', 'pastree/unreferencedUnits');
+
+procedure GroupProjectDone; forward;
+
+{ Project AProject's step AStep, then its next: one server's steps in turn,
+  every server at once (RunGroupSearch). An answer is joined into the
+  project's own (its three kinds and `held`); a failure is kept - the
+  search ends once every project has answered, a partial group would read
+  as "unused" where a project was not asked. }
+procedure GroupStep(AProject, AStep: Integer);
+var
+  LStep: TUnusedStep;
+begin
+  if AStep > High(GSearch.Steps) then
+  begin
+    GroupProjectDone;
+    Exit;
+  end;
+  LStep := GSearch.Steps[AStep];
+  LspUnusedOfProject(GSearch.Projects[AProject], cStepMethod[LStep],
+    GSearch.FileName, (LStep = usUses) and GSearch.Options.Declarations, nil,
+    procedure(ASuccess: Boolean; const AAnswer: TLspUnusedAnswer;
+      const AError: string)
+    begin
+      if not GAlive then
+      begin
+        GSearching := False;
+        Exit;
+      end;
+      try
+        if not ASuccess then
+        begin
+          if GSearch.Failure = '' then
+            GSearch.Failure := Format('%s, %s: %s',
+              [ExtractFileName(GSearch.Projects[AProject]), cStepText[LStep],
+              AError]);
+          GroupProjectDone;
+          Exit;
+        end;
+        GSearch.PerProject[AProject].ProjectFile := AAnswer.ProjectFile;
+        if AAnswer.Held <> nil then
+          GSearch.PerProject[AProject].Held := AAnswer.Held;
+        case LStep of
+          usSymbols:
+            begin
+              GSearch.PerProject[AProject].Symbols := AAnswer.Symbols;
+              GSearch.PerProject[AProject].Skipped := AAnswer.Skipped;
+              GSearch.PerProject[AProject].InRow := AAnswer.InRow;
+            end;
+          usUses: GSearch.PerProject[AProject].Entries := AAnswer.Entries;
+          usNobody: GSearch.PerProject[AProject].Units := AAnswer.Units;
+        end;
+        GroupStep(AProject, AStep + 1);
+      except
+        on E: Exception do
+        begin
+          if GSearch.Failure = '' then
+            GSearch.Failure := Format('unhandled %s: %s', [E.ClassName,
+              E.Message]);
+          GroupProjectDone;
+        end;
+      end;
+    end);
+end;
+
+{ The second round: each project weighs the entries the GROUP removes - the
+  merged rows with no doubt it holds - as removed together; what it holds
+  back joins the merged row as a doubt (UnusedRows.AddTogetherDoubts). }
+procedure GroupTogether;
+var
+  LAsks: TArray<TPair<Integer, TArray<TLspUnusedPlace>>>;
+  LPlaces: TArray<TLspUnusedPlace>;
+begin
+  LAsks := nil;
+  if GSearch.Options.UsesEntries then
+    for var LP := 0 to High(GSearch.Projects) do
+    begin
+      LPlaces := GroupRemovedPlaces(GSearch.Merged, GSearch.PerProject[LP]);
+      if LPlaces <> nil then
+        LAsks := LAsks + [TPair<Integer, TArray<TLspUnusedPlace>>.Create(LP,
+          LPlaces)];
+    end;
+  if LAsks = nil then
+  begin
+    ShowResults;
+    Exit;
+  end;
+  GSearch.Outstanding := Length(LAsks);
+  for var LAsk in LAsks do
+    LspUnusedOfProject(GSearch.Projects[LAsk.Key], 'pastree/unusedUses',
+      GSearch.FileName, False, LAsk.Value,
+      procedure(ASuccess: Boolean; const AAnswer: TLspUnusedAnswer;
+        const AError: string)
+      begin
+        if not GAlive then
+        begin
+          GSearching := False;
+          Exit;
+        end;
+        Dec(GSearch.Outstanding);
+        if ASuccess then
+          AddTogetherDoubts(GSearch.Merged, AAnswer)
+        else if GSearch.Failure = '' then
+          GSearch.Failure := 'removed together: ' + AError;
+        if GSearch.Outstanding > 0 then
+          Exit;
+        if GSearch.Failure <> '' then
+          EndSearch(GSearch.Failure)
+        else
+          ShowResults;
+      end);
+end;
+
+// A project has answered every step (or failed): once all have, merged.
+procedure GroupProjectDone;
+begin
+  Dec(GSearch.Outstanding);
+  if GSearch.Outstanding > 0 then
+    Exit;
+  if GSearch.Failure <> '' then
+  begin
+    EndSearch(GSearch.Failure);
+    Exit;
+  end;
+  try
+    GSearch.Merged := MergeGroupAnswers(GSearch.PerProject);
+    GroupTogether;
+  except
+    on E: Exception do
+      EndSearch(Format('unhandled %s: %s', [E.ClassName, E.Message]));
+  end;
+end;
+
+{ The group search: AProjects (owner first, two or more) asked at once, one
+  wait dialog for all of them - no line per project (Alex, 2026-11-14: one
+  progress for the whole search). }
+procedure RunGroupSearch(const AFile: string; const AOptions: TUnusedOptions;
+  const AProjects: TArray<string>; const AGroupName: string);
+begin
+  GSearch.FileName := AFile;
+  GSearch.Options := AOptions;
+  GSearch.Steps := nil;
+  if AOptions.Declarations then
+    GSearch.Steps := GSearch.Steps + [usSymbols];
+  if AOptions.UsesEntries then
+    GSearch.Steps := GSearch.Steps + [usUses];
+  if AOptions.SearchesNobodyUses then
+    GSearch.Steps := GSearch.Steps + [usNobody];
+  if GSearch.Steps = nil then
+    Exit;
+  GSearch.Merged := Default(TLspUnusedAnswer);
+  GSearch.Projects := AProjects;
+  GSearch.GroupName := AGroupName;
+  GSearch.PerProject := nil;
+  SetLength(GSearch.PerProject, Length(AProjects));
+  GSearch.Outstanding := Length(AProjects);
+  GSearch.Failure := '';
+  GSearch.Start := TThread.GetTickCount64;
+  GSearching := True;
+  ShowWaitDialog(Format('Looking for unused code in %d projects...',
+    [Length(AProjects)]));
+  // Counted first: a project without a session answers at once.
+  for var LP := 0 to High(AProjects) do
+    GroupStep(LP, 0);
+end;
+
+// The open group's .groupproj when it has two projects or more, else ''.
+function GroupFileForUnused(const AOwnerProjectFile: string): string;
+var
+  LModuleServices: IOTAModuleServices;
+begin
+  Result := '';
+  if (GroupScopeProjects(AOwnerProjectFile) <> nil) and
+     Supports(BorlandIDEServices, IOTAModuleServices, LModuleServices) and
+     Assigned(LModuleServices.MainProjectGroup) then
+  begin
+    Result := LModuleServices.MainProjectGroup.FileName;
+    if Result = '' then
+      Result := 'ProjectGroup';
+  end;
+end;
+
 procedure ExecuteUnused(const AView: IOTAEditView);
 var
-  LFile: string;
+  LFile, LOwner, LGroupFile: string;
   LOptions: TUnusedOptions;
+  LSelected, LProjects: TArray<string>;
 begin
   try
     if not Assigned(AView) or not Assigned(AView.Buffer) or not UseTab then
@@ -1945,15 +2499,36 @@ begin
       Exit;
     end;
     LFile := AView.Buffer.FileName;
-    if not ExecuteUnusedDialog(LFile, LspOwningProjectFile(LFile), LOptions)
-    then
+    LOwner := LspOwningProjectFile(LFile);
+    LGroupFile := GroupFileForUnused(LOwner);
+    if not ExecuteUnusedDialog(LFile, LOwner, LGroupFile, LOptions) then
       Exit;
+    // The group: which projects, as Find All References asks it - the
+    // owner always, the others as ticked last time in this group.
+    LProjects := nil;
+    if LOptions.Group then
+    begin
+      if not ChooseGroupScope(LOwner, 'Find Unused', 'Unused code',
+        LSelected) then
+        Exit;
+      LProjects := LspGroupProjectFiles(LFile, LSelected);
+      // The owner alone ticked: that is the project's search.
+      if Length(LProjects) < 2 then
+      begin
+        LOptions.Group := False;
+        LProjects := nil;
+      end;
+    end;
     if GTab.Removals <> nil then
       if MessageDlg('The Removes made from the ' + GTab.Caption + ' tab ' +
         'can still be reverted there. A new search drops that. Search anyway?',
         mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
         Exit;
-    RunSearch(LFile, LOptions);
+    if LProjects <> nil then
+      RunGroupSearch(LFile, LOptions, LProjects,
+        ChangeFileExt(ExtractFileName(LGroupFile), ''))
+    else
+      RunSearch(LFile, LOptions);
   except
     on E: Exception do
     begin

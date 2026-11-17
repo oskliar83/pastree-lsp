@@ -80,6 +80,7 @@ contains
   { Find All > Unused...: the dialog (UnusedForm) and the one results tab
     with the Remove / Revert toolbar for units. See UnusedUnits' header. }
   PasTreeIdePlugin.UnusedUnits in 'PasTreeIdePlugin.UnusedUnits.pas',
+  PasTreeIdePlugin.UnusedRows in 'PasTreeIdePlugin.UnusedRows.pas',
   PasTreeIdePlugin.UnusedForm in 'PasTreeIdePlugin.UnusedForm.pas' {PasTreeUnusedForm},
   { Find All > Unit Import Graph: through which units the program takes a unit
     in (pastree/importGraph). See its header. }

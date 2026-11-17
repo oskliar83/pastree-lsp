@@ -555,7 +555,10 @@ const
   /// 0.209.0 (2026-11-17): PasTree.SymbolEdit (pastree/symbolsRemoval) and
   /// TPasUnusedSymbol.WriteSites (unusedSymbols' `writeSites`); an older
   /// library has neither (a compile error).
-  cMinPasTreeVersion = '0.209.0';
+  /// 0.210.0 (2026-11-17): TPasUnusedUseKept and the FindUnusedUses overload
+  /// taking it - unusedUses' `removed` (the group's together check); an
+  /// older library has neither (a compile error).
+  cMinPasTreeVersion = '0.210.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

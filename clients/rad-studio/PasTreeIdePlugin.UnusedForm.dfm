@@ -4,7 +4,7 @@ object PasTreeUnusedForm: TPasTreeUnusedForm
   BorderIcons = [biSystemMenu]
   BorderStyle = bsDialog
   Caption = 'Find Unused'
-  ClientHeight = 283
+  ClientHeight = 307
   ClientWidth = 360
   Color = clBtnFace
   Font.Charset = DEFAULT_CHARSET
@@ -18,7 +18,7 @@ object PasTreeUnusedForm: TPasTreeUnusedForm
     Left = 12
     Top = 8
     Width = 336
-    Height = 74
+    Height = 98
     Caption = 'Search in'
     TabOrder = 0
     object rbUnit: TRadioButton
@@ -39,10 +39,18 @@ object PasTreeUnusedForm: TPasTreeUnusedForm
       Caption = 'Project'
       TabOrder = 1
     end
+    object rbGroup: TRadioButton
+      Left = 12
+      Top = 70
+      Width = 312
+      Height = 19
+      Caption = 'Project group'
+      TabOrder = 2
+    end
   end
   object grpLookFor: TGroupBox
     Left = 12
-    Top = 90
+    Top = 114
     Width = 336
     Height = 98
     Caption = 'Look for'
@@ -72,7 +80,7 @@ object PasTreeUnusedForm: TPasTreeUnusedForm
       Top = 70
       Width = 312
       Height = 19
-      Caption = 'Units nobody uses (project only)'
+      Caption = 'Units nobody uses (project or group)'
       Checked = True
       State = cbChecked
       TabOrder = 2
@@ -80,7 +88,7 @@ object PasTreeUnusedForm: TPasTreeUnusedForm
   end
   object cbDoubts: TCheckBox
     Left = 24
-    Top = 198
+    Top = 222
     Width = 324
     Height = 19
     Caption = 'Show rows the analysis is not sure about'
@@ -88,7 +96,7 @@ object PasTreeUnusedForm: TPasTreeUnusedForm
   end
   object btnOK: TButton
     Left = 172
-    Top = 244
+    Top = 268
     Width = 85
     Height = 27
     Caption = 'OK'
@@ -98,7 +106,7 @@ object PasTreeUnusedForm: TPasTreeUnusedForm
   end
   object btnCancel: TButton
     Left = 263
-    Top = 244
+    Top = 268
     Width = 85
     Height = 27
     Cancel = True

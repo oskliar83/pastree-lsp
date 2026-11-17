@@ -8733,6 +8733,64 @@ begin
   Result := Copy(AObjectJson, 1, Length(AObjectJson) - 1) + AMembers + '}';
 end;
 
+{ GROUP MODE (0.93.0). The plugin asks every project of a group the same
+  question and keeps a row only when every project holding its file finds
+  it unused - pastree-mcp's rule, made where every analysis answers. With
+  `group: true` an answer says which files were searched (`held`, the URIs
+  of the project units), so the client can count who holds a file. }
+
+// A place as the group requests key it: the file in lower case, the line
+// and the column (PasTree's, 1-based).
+function PlaceKey(const AFilePath: string; ALine, ACol: Integer): string;
+begin
+  Result := Format('%s:%d:%d', [LowerCase(AFilePath), ALine, ACol]);
+end;
+
+// ',"held":[uri,...]' - the files a group answer searched.
+function HeldMember(const AFiles: TArray<string>): string;
+var
+  LSB: TStringBuilder;
+begin
+  LSB := TStringBuilder.Create;
+  try
+    LSB.Append(',"held":[');
+    for var LI := 0 to High(AFiles) do
+    begin
+      if LI > 0 then
+        LSB.Append(',');
+      LSB.Append(JsonQuote(PathToUri(AFiles[LI])));
+    end;
+    LSB.Append(']');
+    Result := LSB.ToString;
+  finally
+    LSB.Free;
+  end;
+end;
+
+{ pastree/unusedUses' `removed`: the entries (uri, line, character - the
+  name's start) the group removes, which loTogether weighs as removed here -
+  every other row stays. nil without it; the caller frees the set. }
+function GroupRemovedSet(AParams: TJSONValue): TDictionary<string, Boolean>;
+var
+  LArr: TJSONArray;
+  LLine, LCol: Integer;
+begin
+  Result := nil;
+  if (AParams = nil) or
+     not AParams.TryGetValue<TJSONArray>('removed', LArr) then
+    Exit;
+  Result := TDictionary<string, Boolean>.Create;
+  for var LItem in LArr do
+  begin
+    if not (LItem is TJSONObject) then
+      Continue;
+    LspToPasTree(LItem.GetValue<Integer>('line', -1),
+      LItem.GetValue<Integer>('character', -1), LLine, LCol);
+    Result.AddOrSetValue(PlaceKey(UriToPath(LItem.GetValue<string>('uri',
+      '')), LLine, LCol), True);
+  end;
+end;
+
 { pastree/unusedUses - OURS. The `uses` entries a unit does not need
   (PasTree.Sema.Lint.FindUnusedUses): `scope` "unit" checks the document,
   "project" every unit of the analysis outside LibraryPaths. Rows are
@@ -8775,19 +8833,28 @@ var
   LStart: UInt64;
   LNotSearched: Integer;
   LOptions: TPasLintOptions;
+  LGroup: Boolean;
+  LRemoved: TDictionary<string, Boolean>;
+  LFiles: TArray<string>;
 begin
   LPath := DocPathOf(AMsg.Params);
   LScope := 'unit';
   LOptions := [loHideGlobalInit, loTogether];
+  LGroup := False;
   if AMsg.Params <> nil then
   begin
     LScope := AMsg.Params.GetValue<string>('scope', 'unit');
     if AMsg.Params.GetValue<Boolean>('afterRows', False) then
       Include(LOptions, loAfterRows);
+    LGroup := AMsg.Params.GetValue<Boolean>('group', False);
   end;
   if (LScope <> 'unit') and (LScope <> 'project') then
     Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
       'unusedUses: scope must be "unit" or "project"'));
+  // A group's host weighs the rows together itself, over the entries the
+  // whole group removes (GroupRemovedSet): not here, unless it says which.
+  if LGroup then
+    Exclude(LOptions, loTogether);
   if not WaitAnalyzed(LPath, AMsg.IdJson) then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
   if FNav = nil then
@@ -8809,7 +8876,23 @@ begin
   // lint reads full first (a rebuild with the project as donor when a
   // promotion asks for one): the rows are the full analysis's. By file,
   // since the model ids are a new project's after a rebuild.
-  LRows := FWS.FindUnusedUses(ModelFiles(LMids), LOptions);
+  LFiles := ModelFiles(LMids);
+  LRemoved := GroupRemovedSet(AMsg.Params);
+  try
+    if LRemoved = nil then
+      LRows := FWS.FindUnusedUses(LFiles, LOptions)
+    else
+      // Weighed together over the entries the group removes: every other
+      // row stays (PasTree 0.210.0's TPasUnusedUseKept).
+      LRows := FWS.FindUnusedUses(LFiles, LOptions + [loTogether],
+        function(const ARow: TPasUnusedUse): Boolean
+        begin
+          Result := not LRemoved.ContainsKey(PlaceKey(ARow.Hit.FilePath,
+            ARow.Hit.Line, ARow.Hit.Col));
+        end);
+  finally
+    LRemoved.Free;
+  end;
   LNotSearched := WsDone('pastree/unusedUses');
   if FWS.Status.Cancelled then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
@@ -8857,10 +8940,11 @@ begin
     for var LRow in LRows do
       if LRow.Doubts <> nil then
         Inc(LMid);
-    Log(Format('unusedUses %s: %d units checked -> %d entries, %d ' +
-      'with a doubt, in %d ms', [LScope, Length(LMids), Length(LRows), LMid,
-      GetTickCount64 - LStart]));
+    Log(Format('unusedUses %s%s: %d units checked -> %d entries, %d ' +
+      'with a doubt, in %d ms', [LScope, IfThen(LGroup, ' (group)', ''),
+      Length(LMids), Length(LRows), LMid, GetTickCount64 - LStart]));
     Result := BuildResponse(AMsg.IdJson, '{"rows":[' + LSB.ToString + ']' +
+      IfThen(LGroup, HeldMember(LFiles), '') +
       NotSearchedMember(LNotSearched) + '}');
   finally
     LSB.Free;
@@ -9081,11 +9165,14 @@ end;
   "itself unreferenced") and `program` (true for the .dpr/.dpk, whose entry
   the client removes by taking the unit out of the project). The client
   removes the other entries through pastree/usesRemoval, so the project
-  still compiles once the unit is out of it. }
+  still compiles once the unit is out of it. `group: true` adds `held`
+  (see PlaceKey). }
 function TLspServer.HandleUnreferencedUnits(const AMsg: TLspIncoming): string;
 var
   LPath, LNote, LFileName, LLister: string;
   LMids: TArray<Integer>;
+  LFiles: TArray<string>;
+  LGroup: Boolean;
   LRows: TArray<TPasUnreferencedUnit>;
   LRowMid: Integer;
   LModel: TPasSemaModel;
@@ -9102,10 +9189,13 @@ begin
   if FNav = nil then
     Exit(BuildResponse(AMsg.IdJson, '{"rows":[]}'));
   LStart := GetTickCount64;
+  LGroup := (AMsg.Params <> nil) and
+    AMsg.Params.GetValue<Boolean>('group', False);
   LMids := ProjectUnitMids;
+  LFiles := ModelFiles(LMids);
   // As pastree/unusedUses: through the workspace, which makes the light
   // units the lint reads full first.
-  LRows := FWS.FindUnreferencedUnits(ModelFiles(LMids), [loHideGlobalInit]);
+  LRows := FWS.FindUnreferencedUnits(LFiles, [loHideGlobalInit]);
   LNotSearched := WsDone('pastree/unreferencedUnits');
   if FWS.Status.Cancelled then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
@@ -9168,6 +9258,7 @@ begin
       'uses, in %d ms', [Length(LMids), Length(LRows),
       GetTickCount64 - LStart]));
     Result := BuildResponse(AMsg.IdJson, '{"rows":[' + LSB.ToString + ']' +
+      IfThen(LGroup, HeldMember(LFiles), '') +
       NotSearchedMember(LNotSearched) + '}');
   finally
     LListed.Free;
@@ -9274,13 +9365,18 @@ var
   LSB: TStringBuilder;
   LStart: UInt64;
   LLib: TPasUnusedLibrary;
+  LGroup: Boolean;
+  LFiles: TArray<string>;
+  LInRow: string;
 begin
   LPath := DocPathOf(AMsg.Params);
   LScope := 'unit';
   LLib := Default(TPasUnusedLibrary);
+  LGroup := False;
   if AMsg.Params <> nil then
   begin
     LScope := AMsg.Params.GetValue<string>('scope', 'unit');
+    LGroup := AMsg.Params.GetValue<Boolean>('group', False);
     LLib.PackagesInternal := not AMsg.Params.GetValue<Boolean>('exported',
       True);
   end;
@@ -9304,8 +9400,8 @@ begin
     LMids := ProjectUnitMids;
   // Through the workspace: in light mode a library body may use an own
   // declaration, and the demand makes those bodies full first.
-  LRows := FWS.FindUnusedSymbols(ModelFiles(LMids), LLib, nil, LSkips,
-    LInRowTypes);
+  LFiles := ModelFiles(LMids);
+  LRows := FWS.FindUnusedSymbols(LFiles, LLib, nil, LSkips, LInRowTypes);
   LNotSearched := WsDone('pastree/unusedSymbols');
   if FWS.Status.Cancelled then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
@@ -9378,8 +9474,24 @@ begin
     Log(Format('unusedSymbols %s: %d units checked -> %d declarations, %d ' +
       'with a doubt, in %d ms', [LScope, Length(LMids), Length(LRows),
       LDoubtful, GetTickCount64 - LStart]));
+    // A group (0.93.0): the files searched, and where the members of row
+    // types are - unused here, so a row of the group where another project
+    // uses their type and not them (pastree-mcp's rule).
+    LInRow := '';
+    if LGroup then
+    begin
+      for var LS in LInRowTypes do
+      begin
+        PasTreeToLsp(LS.Line, LS.Col, LAt, LMid);
+        LInRow := LInRow + IfThen(LInRow <> '', ',') + Format(
+          '{"uri":%s,"line":%d,"character":%d}',
+          [JsonQuote(PathToUri(LS.FileName)), LAt, LMid]);
+      end;
+      LInRow := HeldMember(LFiles) + ',"inRow":[' + LInRow + ']';
+    end;
     Result := BuildResponse(AMsg.IdJson, '{"rows":[' + LSB.ToString + ']' +
-      ',"skipped":[' + LSkipped + ']' + NotSearchedMember(LNotSearched) + '}');
+      ',"skipped":[' + LSkipped + ']' + LInRow +
+      NotSearchedMember(LNotSearched) + '}');
   finally
     LSB.Free;
   end;
