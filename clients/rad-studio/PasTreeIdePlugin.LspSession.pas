@@ -579,6 +579,9 @@ type
     Doubts: TArray<string>;
     Refused: string;
     TypeSpans: TArray<Integer>;
+    // `afterRows` (0.89.14): the unused declarations the entry is needed
+    // only by - it goes with them, never removed alone. nil otherwise.
+    By: TArray<string>;
   end;
 
   /// <summary>A `uses` entry naming a unit nobody uses. IsProgram: the
@@ -1164,10 +1167,11 @@ procedure LspUseUnit(const AFileName, AUnitName: string;
 /// <summary>
 /// pastree/unusedUses: AScope 'unit' (AFileName's own uses) or 'project'
 /// (every unit of AFileName's project outside the library paths). Asked of
-/// the owner, after a document sync.
+/// the owner, after a document sync. AAfterRows: also the entries needed
+/// only by unused declarations (`afterRows`, rows with By).
 /// </summary>
 procedure LspUnusedUses(const AScope, AFileName: string;
-  const AOnDone: TLspUnusedProc);
+  const AOnDone: TLspUnusedProc; AAfterRows: Boolean = False);
 
 /// <summary>pastree/unreferencedUnits over AFileName's project.</summary>
 procedure LspUnreferencedUnits(const AFileName: string;
@@ -1830,7 +1834,7 @@ type
       AImplementation: Boolean; const AOnDone: TLspUseUnitProc);
     /// <summary>pastree/unusedUses or pastree/unreferencedUnits.</summary>
     procedure UnusedUnits(const AMethod, AScope, AFileName: string;
-      const AOnDone: TLspUnusedProc);
+      const AOnDone: TLspUnusedProc; AAfterRows: Boolean = False);
     /// <summary>pastree/usesRemoval.</summary>
     procedure UsesRemoval(const AFiles: TArray<TLspRemovalFile>;
       const AOnDone: TLspUsesRemovalProc);
@@ -5512,6 +5516,7 @@ begin
         LEntry.Section := LObj.GetValue<string>('section', '');
         LEntry.Doubts := ReadStrings(LObj, 'doubts');
         LEntry.Refused := LObj.GetValue<string>('refused', '');
+        LEntry.By := ReadStrings(LObj, 'by');
         LEntry.TypeSpans := ReadIntArray(LObj, 'typeSpans');
         Result.Entries := Result.Entries + [LEntry];
       end;
@@ -5520,7 +5525,7 @@ begin
 end;
 
 procedure TLspSession.UnusedUnits(const AMethod, AScope, AFileName: string;
-  const AOnDone: TLspUnusedProc);
+  const AOnDone: TLspUnusedProc; AAfterRows: Boolean);
 var
   LParams, LDoc: TJSONObject;
   LProjectFile: string;
@@ -5539,6 +5544,8 @@ begin
   LParams.AddPair('textDocument', LDoc);
   if AScope <> '' then
     LParams.AddPair('scope', AScope);
+  if AAfterRows then
+    LParams.AddPair('afterRows', TJSONBool.Create(True));
   LProjectFile := FProjectFile;
   FClient.Request(AMethod, LParams,
     procedure(ASuccess: Boolean; AResult: TJSONValue; const AError: string)
@@ -7509,7 +7516,7 @@ begin
 end;
 
 procedure LspUnusedUses(const AScope, AFileName: string;
-  const AOnDone: TLspUnusedProc);
+  const AOnDone: TLspUnusedProc; AAfterRows: Boolean);
 var
   LSession: TLspSession;
 begin
@@ -7519,7 +7526,8 @@ begin
     AOnDone(False, Default(TLspUnusedAnswer), 'LSP session not initialized');
     Exit;
   end;
-  LSession.UnusedUnits('pastree/unusedUses', AScope, AFileName, AOnDone);
+  LSession.UnusedUnits('pastree/unusedUses', AScope, AFileName, AOnDone,
+    AAfterRows);
 end;
 
 procedure LspUnreferencedUnits(const AFileName: string;

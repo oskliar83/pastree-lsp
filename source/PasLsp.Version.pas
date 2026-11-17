@@ -541,7 +541,10 @@ const
   /// 0.205.0 (2026-11-16): a library's exported declarations
   /// (TPasUnusedLibrary, TPasUnusedSymbol.Api) - unusedSymbols' `exported`
   /// and `api`; an older library has neither (a compile error).
-  cMinPasTreeVersion = '0.205.0';
+  /// 0.206.0 (2026-11-16): FindUnusedUses' loAfterRows and
+  /// TPasUnusedUse.By - unusedUses' `afterRows` and `by`; an older library
+  /// has neither (a compile error).
+  cMinPasTreeVersion = '0.206.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

@@ -8674,7 +8674,16 @@ end;
   or a resource, leave it out of the program together. Such a row gets the
   doubt "removed together with the other unused entries no doubt holds
   back, it leaves X out of P", so the client treats it as any doubt row:
-  hidden unless doubts are asked for, never removed. }
+  hidden unless doubts are asked for, never removed.
+
+  `afterRows` (0.89.14, PasTree 0.206.0's loAfterRows; off unless asked -
+  it costs the unused-declaration search): an entry every use of which
+  sits in unused declarations of its unit (pastree/unusedSymbols' rows) is
+  a row too, with `by` naming them - removed with them it is missed by
+  nothing, removed alone they no longer compile. Every row has `by`, []
+  for an entry nothing uses; a client offers a row with `by` only together
+  with the declarations it names, never Remove alone, and loTogether weighs
+  it as kept. }
 function TLspServer.HandleUnusedUses(const AMsg: TLspIncoming): string;
 var
   LPath, LScope, LReason: string;
@@ -8687,11 +8696,17 @@ var
   LSB: TStringBuilder;
   LStart: UInt64;
   LNotSearched: Integer;
+  LOptions: TPasLintOptions;
 begin
   LPath := DocPathOf(AMsg.Params);
   LScope := 'unit';
+  LOptions := [loHideGlobalInit, loTogether];
   if AMsg.Params <> nil then
+  begin
     LScope := AMsg.Params.GetValue<string>('scope', 'unit');
+    if AMsg.Params.GetValue<Boolean>('afterRows', False) then
+      Include(LOptions, loAfterRows);
+  end;
   if (LScope <> 'unit') and (LScope <> 'project') then
     Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
       'unusedUses: scope must be "unit" or "project"'));
@@ -8716,8 +8731,7 @@ begin
   // lint reads full first (a rebuild with the project as donor when a
   // promotion asks for one): the rows are the full analysis's. By file,
   // since the model ids are a new project's after a rebuild.
-  LRows := FWS.FindUnusedUses(ModelFiles(LMids), [loHideGlobalInit,
-    loTogether]);
+  LRows := FWS.FindUnusedUses(ModelFiles(LMids), LOptions);
   LNotSearched := WsDone('pastree/unusedUses');
   if FWS.Status.Cancelled then
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
@@ -8755,11 +8769,11 @@ begin
         LSB.Append(',');
       LSB.Append(WithMembers(WithTypeSpans(HitLocationJson(LRows[LIdx].Hit),
         LineTypeSpansJson(LRows[LIdx].Hit.FilePath, LRows[LIdx].Hit.Line)),
-        Format(',"unitName":%s,"section":%s,"doubts":%s,"refused":%s',
-        [JsonQuote(LRows[LIdx].UnitName),
+        Format(',"unitName":%s,"section":%s,"doubts":%s,"refused":%s,' +
+        '"by":%s', [JsonQuote(LRows[LIdx].UnitName),
          JsonQuote(IfThen(LRows[LIdx].InInterface, 'interface',
            'implementation')), StringsJson(LRows[LIdx].Doubts),
-         JsonQuote(LReason)])));
+         JsonQuote(LReason), StringsJson(LRows[LIdx].By)])));
     end;
     LMid := 0;
     for var LRow in LRows do

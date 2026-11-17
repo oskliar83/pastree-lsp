@@ -5364,7 +5364,8 @@ begin
     '  {$ENDIF}'#13#10'  ULoc{$IFDEF MSWINDOWS}, UGlob{$ENDIF},'#13#10 +
     '  UHelper;'#13#10'implementation'#13#10'end.'#13#10);
   WriteUnit('UNobody', 'unit UNobody;'#13#10'interface'#13#10 +
-    'procedure N;'#13#10'implementation'#13#10'procedure N; begin end;'#13#10 +
+    'procedure N;'#13#10'implementation'#13#10'uses UStr;'#13#10 +
+    'procedure Dead; begin S; end;'#13#10'procedure N; begin end;'#13#10 +
     'end.'#13#10);
   LUA := TPath.Combine(LDir, 'UA.pas');
 
@@ -5399,6 +5400,29 @@ begin
     Check(GOk and GResultJson.Contains('"unitName":"UB"') and
       not GResultJson.Contains('"unitName":"UStr"'),
       'UMulti: UB is unused there, UStr is used');
+    Check(GOk and GResultJson.Contains('"by":[]'),
+      'a row nothing uses has an empty `by`');
+
+    // `afterRows` (0.89.14, PasTree 0.206.0): UNobody lists UStr only for
+    // Dead, which nothing calls - no row without it, with it a row whose
+    // `by` names Dead. UA's entries are as before: the empty case.
+    LUA := TPath.Combine(LDir, 'UNobody.pas');
+    LParams := UnusedParams('unit');
+    Check(Ask('pastree/unusedUses', LParams) and GOk and
+      GResultJson.Contains('"rows":[]'),
+      'UNobody: UStr is used (by Dead) - no row without afterRows');
+    LParams := UnusedParams('unit');
+    LParams.AddPair('afterRows', TJSONBool.Create(True));
+    Check(Ask('pastree/unusedUses', LParams) and GOk and
+      GResultJson.Contains('"unitName":"UStr"') and
+      GResultJson.Contains('"by":["Dead"]'),
+      'UNobody: with afterRows, UStr goes with Dead');
+    LUA := TPath.Combine(LDir, 'UA.pas');
+    LParams := UnusedParams('unit');
+    LParams.AddPair('afterRows', TJSONBool.Create(True));
+    Check(Ask('pastree/unusedUses', LParams) and GOk and
+      not GResultJson.Contains('"by":["'),
+      'UA: with afterRows, no row goes with a declaration');
 
     // pastree/unusedSymbols (0.89.0): UA's one declaration is used by the
     // program - an empty answer, the not-weighed counts still there; over

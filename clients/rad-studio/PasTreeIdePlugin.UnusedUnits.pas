@@ -27,7 +27,11 @@ unit PasTreeIdePlugin.UnusedUnits;
   (PasTree's loTogether, 0.89.9): an entry safe alone but, with the others,
   the last path to a unit with initialization or a resource comes with a
   doubt ("removed together with the other unused entries ...") - kept
-  like any other doubt row, never removed silently.
+  like any other doubt row, never removed silently. With declarations asked
+  for, the search asks `afterRows` too (0.89.14): an entry needed only by
+  unused declarations is listed with the note "goes with: unused X - remove
+  it with them", and neither Remove nor Remove All takes it - removed
+  before them, they no longer compile; declarations are removed by hand.
 
   THE TREE: a title row with the counts, then a row per part searched that
   found anything - "declarations (N)", "units in uses (N)", "units nobody
@@ -539,10 +543,12 @@ begin
   Result := False;
 end;
 
-// An entry Remove takes out: no doubt, and an edit can do it.
+// An entry Remove takes out: no doubt, an edit can do it, and it does not
+// go with unused declarations (By: removed alone, they no longer compile).
 function EntryRemovable(const AEntry: TLspUnusedEntry): Boolean;
 begin
-  Result := (AEntry.Doubts = nil) and (AEntry.Refused = '');
+  Result := (AEntry.Doubts = nil) and (AEntry.Refused = '') and
+    (AEntry.By = nil);
 end;
 
 // Whether ANode has anything Remove takes out. A declaration never has.
@@ -837,9 +843,14 @@ var
     GTab.RowNode.AddOrSetValue(LRowPtr, [ANode]);
     GTab.ShownNode := GTab.ShownNode + [ANode];
     GTab.ShownRow := GTab.ShownRow + [LRowPtr];
+    if LEntry.By <> nil then
+      Note(ANode, 'goes with: ', 'unused ' + string.Join(', ', LEntry.By) +
+        ' - remove it with ' + IfThen(Length(LEntry.By) = 1, 'it', 'them'),
+        LRowPtr);
     for var LDoubt in LEntry.Doubts do
       Note(ANode, 'kept: ', LDoubt, LRowPtr);
-    if (LEntry.Doubts = nil) and (LEntry.Refused <> '') then
+    if (LEntry.Doubts = nil) and (LEntry.By = nil) and
+       (LEntry.Refused <> '') then
       Note(ANode, 'not removable: ', LEntry.Refused, LRowPtr);
   end;
 
@@ -1721,7 +1732,10 @@ begin
   LScope := IfThen(GSearch.Options.Project, 'project', 'unit');
   case GSearch.Steps[AStep] of
     usSymbols: LspUnusedSymbols(LScope, GSearch.FileName, LDone);
-    usUses: LspUnusedUses(LScope, GSearch.FileName, LDone);
+    // With the declarations asked for, the entries only they need too:
+    // shown with what they go with, never removed alone.
+    usUses: LspUnusedUses(LScope, GSearch.FileName, LDone,
+      GSearch.Options.Declarations);
     usNobody: LspUnreferencedUnits(GSearch.FileName, LDone);
   end;
 end;
