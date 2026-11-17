@@ -609,6 +609,13 @@ type
   /// at Row/Col (Len chars), Name qualified by its types, Kind in prose
   /// ("function", "field"), and where the index may be wrong (Doubts).
   /// </summary>
+  /// <summary>Where an only-assigned row is written: IDE 1-based.</summary>
+  TLspWriteSite = record
+    FilePath: string;
+    Row, Col: Integer;
+    Computed: Boolean;
+  end;
+
   TLspUnusedSymbol = record
     FilePath: string;
     Row, Col, Len: Integer;
@@ -621,7 +628,32 @@ type
     // Its kind of row made by rows: 'usedOnlyByUnused', 'onlyAssigned', ''.
     How: string;
     TypeSpans: TArray<Integer>;
+    // The rows using it, qualified ('' for itself) - they go with it.
+    By: TArray<string>;
+    // An only-assigned row's assignments: where the name is written (moved
+    // with the edits like the row) and whether code computes the value.
+    WriteSites: TArray<TLspWriteSite>;
+    // Why Remove cannot take it out (pastree/symbolsRemoval's refusal,
+    // kept for the rest of the tab's life); '' while none is known.
+    Refused: string;
   end;
+
+  /// <summary>pastree/symbolsRemoval: the deletions, the indices of the
+  /// rows they take out (the asked ones and what goes with them) and the
+  /// asked rows refused - Row an index into the rows sent.</summary>
+  TLspSymbolRefusal = record
+    Row: Integer;
+    Reason: string;
+  end;
+
+  TLspSymbolsRemovalAnswer = record
+    Edits: TArray<TLspUsesEdit>;
+    Taken: TArray<Integer>;
+    Refused: TArray<TLspSymbolRefusal>;
+  end;
+
+  TLspSymbolsRemovalProc = reference to procedure(ASuccess: Boolean;
+    const AAnswer: TLspSymbolsRemovalAnswer; const AError: string);
 
   /// <summary>Any of the three answers: Entries for unusedUses, Units for
   /// unreferencedUnits, Symbols and Skipped ("105 published members") for
@@ -1231,6 +1263,14 @@ procedure LspUnusedSymbols(const AScope, AFileName: string;
 /// AFileName's owner.</summary>
 procedure LspUsesRemoval(const AFileName: string;
   const AFiles: TArray<TLspRemovalFile>; const AOnDone: TLspUsesRemovalProc);
+
+/// <summary>pastree/symbolsRemoval: the deletions that remove the rows
+/// ARemove (indices into ARows) of the declarations ARows with what goes
+/// with them, computed on the text after a document sync. Asked of
+/// AFileName's owner.</summary>
+procedure LspSymbolsRemoval(const AFileName: string;
+  const ARows: TArray<TLspUnusedSymbol>; const ARemove: TArray<Integer>;
+  const AOnDone: TLspSymbolsRemovalProc);
 
 /// <summary>
 /// The .dproj of the project that would answer for AFileName - the owner,
@@ -1884,6 +1924,9 @@ type
     /// <summary>pastree/usesRemoval.</summary>
     procedure UsesRemoval(const AFiles: TArray<TLspRemovalFile>;
       const AOnDone: TLspUsesRemovalProc);
+    /// <summary>pastree/symbolsRemoval.</summary>
+    procedure SymbolsRemoval(const ARows: TArray<TLspUnusedSymbol>;
+      const ARemove: TArray<Integer>; const AOnDone: TLspSymbolsRemovalProc);
     /// <summary>pastree/outlineTarget for a project row this server listed.</summary>
     procedure OutlineTarget(const ARow: TLspOutlineRow;
       const AOnDone: TLspHitsProc);
@@ -5484,6 +5527,28 @@ begin
       Result := Result + [LItem.Value];
 end;
 
+// An only-assigned row's `writeSites`.
+function ReadWriteSites(AObj: TJSONObject): TArray<TLspWriteSite>;
+var
+  LArr: TJSONArray;
+  LSite: TLspWriteSite;
+begin
+  Result := nil;
+  if not AObj.TryGetValue<TJSONArray>('writeSites', LArr) then
+    Exit;
+  for var LValue in LArr do
+  begin
+    if not (LValue is TJSONObject) then
+      Continue;
+    LSite := Default(TLspWriteSite);
+    LSite.FilePath := LspUriToPath(LValue.GetValue<string>('uri', ''));
+    LspToIde(LValue.GetValue<Integer>('line', 0),
+      LValue.GetValue<Integer>('character', 0), LSite.Row, LSite.Col);
+    LSite.Computed := LValue.GetValue<Boolean>('computed', False);
+    Result := Result + [LSite];
+  end;
+end;
+
 function ParseUnusedAnswer(AResult: TJSONValue): TLspUnusedAnswer;
 var
   LArr, LListed: TJSONArray;
@@ -5523,6 +5588,8 @@ begin
         LSymbol.Why := LObj.GetValue<string>('why', '');
         LSymbol.How := LObj.GetValue<string>('how', '');
         LSymbol.TypeSpans := ReadIntArray(LObj, 'typeSpans');
+        LSymbol.By := ReadStrings(LObj, 'by');
+        LSymbol.WriteSites := ReadWriteSites(LObj);
         // Thousands of rows on a large project: grown by halves, not by one.
         if LSymbols = Length(Result.Symbols) then
           SetLength(Result.Symbols, LSymbols + LSymbols div 2 + 16);
@@ -5740,6 +5807,90 @@ begin
     end;
   Result.Refused := ReadStrings(TJSONObject(AResult), 'refused');
   Result.Missing := ReadStrings(TJSONObject(AResult), 'missing');
+end;
+
+procedure TLspSession.SymbolsRemoval(const ARows: TArray<TLspUnusedSymbol>;
+  const ARemove: TArray<Integer>; const AOnDone: TLspSymbolsRemovalProc);
+var
+  LParams, LRow, LSite: TJSONObject;
+  LRows, LArr, LSites: TJSONArray;
+  LLine, LChar: Integer;
+begin
+  if not EnsureSession then
+  begin
+    AOnDone(False, Default(TLspSymbolsRemovalAnswer),
+      'no LSP server available');
+    Exit;
+  end;
+  // On the text the server holds: the buffers as they are now.
+  FDocs.Sync;
+  LRows := TJSONArray.Create;
+  for var LS in ARows do
+  begin
+    LRow := TJSONObject.Create;
+    LRow.AddPair('uri', PathToLspUri(LS.FilePath));
+    IdeToLsp(LS.Row, LS.Col, LLine, LChar);
+    LRow.AddPair('line', TJSONNumber.Create(LLine));
+    LRow.AddPair('character', TJSONNumber.Create(LChar));
+    LRow.AddPair('name', LS.Name);
+    LRow.AddPair('kind', LS.Kind);
+    LArr := TJSONArray.Create;
+    for var LB in LS.By do
+      LArr.Add(LB);
+    LRow.AddPair('by', LArr);
+    LArr := TJSONArray.Create;
+    for var LD in LS.Doubts do
+      LArr.Add(LD);
+    LRow.AddPair('doubts', LArr);
+    LSites := TJSONArray.Create;
+    for var LW in LS.WriteSites do
+    begin
+      LSite := TJSONObject.Create;
+      LSite.AddPair('uri', PathToLspUri(LW.FilePath));
+      IdeToLsp(LW.Row, LW.Col, LLine, LChar);
+      LSite.AddPair('line', TJSONNumber.Create(LLine));
+      LSite.AddPair('character', TJSONNumber.Create(LChar));
+      LSite.AddPair('computed', TJSONBool.Create(LW.Computed));
+      LSites.AddElement(LSite);
+    end;
+    LRow.AddPair('writeSites', LSites);
+    LRows.AddElement(LRow);
+  end;
+  LArr := TJSONArray.Create;
+  for var LI in ARemove do
+    LArr.Add(LI);
+  LParams := TJSONObject.Create;
+  LParams.AddPair('rows', LRows);
+  LParams.AddPair('remove', LArr);
+  FClient.Request('pastree/symbolsRemoval', LParams,
+    procedure(ASuccess: Boolean; AResult: TJSONValue; const AError: string)
+    var
+      LAnswer: TLspSymbolsRemovalAnswer;
+      LRefusal: TLspSymbolRefusal;
+      LList: TJSONArray;
+    begin
+      if not ASuccess then
+      begin
+        AOnDone(False, Default(TLspSymbolsRemovalAnswer), AError);
+        Exit;
+      end;
+      LAnswer := Default(TLspSymbolsRemovalAnswer);
+      // The edits have the shape of usesRemoval's.
+      LAnswer.Edits := ParseUsesRemovalAnswer(AResult).Edits;
+      if AResult is TJSONObject then
+      begin
+        LAnswer.Taken := ReadIntArray(TJSONObject(AResult), 'taken');
+        if AResult.TryGetValue<TJSONArray>('refused', LList) then
+          for var LValue in LList do
+            if LValue is TJSONObject then
+            begin
+              LRefusal.Row := LValue.GetValue<Integer>('row', -1);
+              LRefusal.Reason := LValue.GetValue<string>('reason', '');
+              LAnswer.Refused := LAnswer.Refused + [LRefusal];
+            end;
+      end;
+      AOnDone(True, LAnswer, '');
+    end);
 end;
 
 procedure TLspSession.UsesRemoval(const AFiles: TArray<TLspRemovalFile>;
@@ -7730,6 +7881,22 @@ begin
     Exit;
   end;
   LSession.UsesRemoval(AFiles, AOnDone);
+end;
+
+procedure LspSymbolsRemoval(const AFileName: string;
+  const ARows: TArray<TLspUnusedSymbol>; const ARemove: TArray<Integer>;
+  const AOnDone: TLspSymbolsRemovalProc);
+var
+  LSession: TLspSession;
+begin
+  LSession := SessionForRequest(AFileName);
+  if LSession = nil then
+  begin
+    AOnDone(False, Default(TLspSymbolsRemovalAnswer),
+      'LSP session not initialized');
+    Exit;
+  end;
+  LSession.SymbolsRemoval(ARows, ARemove, AOnDone);
 end;
 
 procedure LspOutlineTarget(const ARow: TLspOutlineRow;

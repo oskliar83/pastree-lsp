@@ -98,6 +98,7 @@ uses
   PasLsp.AnnotateArgs,
   PasLsp.UseUnit,
   PasTree.UsesEdit,
+  PasTree.SymbolEdit,
   PasTree.Sema.Lint,
   PasTree.Sema.ImportGraph,
   PasTree.Sema.Workspace,
@@ -656,6 +657,7 @@ type
     procedure RemovalRefusals(const AByModel: TDictionary<Integer,
       TArray<Integer>>; ARefused: TDictionary<Int64, string>);
     function HandleUsesRemoval(const AMsg: TLspIncoming): string;
+    function HandleSymbolsRemoval(const AMsg: TLspIncoming): string;
     function HandleOnTypeFormatting(const AMsg: TLspIncoming): string;
     procedure ApplyFormatConfig(AJson: TJSONValue; const AFrom: string);
     function DcuFilterFromConfig: TPasTextFilter;
@@ -9139,7 +9141,8 @@ function UnusedHowJson(const ARow: TPasUnusedSymbol): string;
   end;
 
 var
-  LHow, LWhy: string;
+  LHow, LWhy, LSites: string;
+  LLine, LChar: Integer;
 begin
   case ARow.How of
     uhOnlyByUnused:
@@ -9161,8 +9164,20 @@ begin
   else
     Exit('');
   end;
-  Result := Format(',"how":%s,"by":%s,"writes":%s,"why":%s', [JsonQuote(LHow),
-    StringsJson(ARow.By), StringsJson(ARow.Writes), JsonQuote(LWhy)]);
+  // The assignments placed, for Remove (0.91.0): a client moves them with
+  // its edits and hands them back to pastree/symbolsRemoval.
+  LSites := '';
+  for var LW in ARow.WriteSites do
+  begin
+    PasTreeToLsp(LW.Line, LW.Col, LLine, LChar);
+    LSites := LSites + IfThen(LSites <> '', ',') + Format(
+      '{"uri":%s,"line":%d,"character":%d,"computed":%s}',
+      [JsonQuote(PathToUri(LW.FileName)), LLine, LChar,
+      IfThen(LW.Computed, 'true', 'false')]);
+  end;
+  Result := Format(',"how":%s,"by":%s,"writes":%s,"writeSites":[%s],"why":%s',
+    [JsonQuote(LHow), StringsJson(ARow.By), StringsJson(ARow.Writes), LSites,
+    JsonQuote(LWhy)]);
 end;
 
 function TLspServer.HandleUnusedSymbols(const AMsg: TLspIncoming): string;
@@ -9371,6 +9386,136 @@ begin
     Result := BuildResponse(AMsg.IdJson, '{"edits":[' + LSB.ToString +
       '],"refused":' + StringsJson(LAllRefused) + ',"missing":' +
       StringsJson(LAllMissing) + '}');
+  finally
+    LSB.Free;
+  end;
+end;
+
+{ pastree/symbolsRemoval - OURS (0.91.0). Remove for unused declarations:
+  `rows`, the declaration rows the client holds (as pastree/unusedSymbols
+  answered them - `uri`, `line`, `character` of the name, `name`, `kind`,
+  `by`, `doubts`, `writeSites` - moved by the client to where its earlier
+  Removes left them), and `remove`, the indices of the rows asked for.
+  Answered with the edits (uri, range, oldText, newText - deletions only)
+  that remove them on the text as it is NOW (the open document, or the file
+  on disk; parse only, no analysis to wait for - PasTree.SymbolEdit), with
+  what must go with them: the rows in `by` (transitively), the assignments
+  of an only-assigned row, a type's members and method bodies. `taken`: the
+  indices of every row the edits remove; `refused`: the index and the
+  reason of an asked row that stays (a doubt, a directive inside, a
+  declaration split between $IFDEF branches, a computed value assigned, a variant field, the file changed...). The
+  rows of all files are needed, not only the asked ones: what goes with a
+  row is found among them. }
+function TLspServer.HandleSymbolsRemoval(const AMsg: TLspIncoming): string;
+var
+  LRowsJson, LAsked, LArr: TJSONArray;
+  LRows: TArray<TPasUnusedSymbol>;
+  LRow: TPasUnusedSymbol;
+  LWrite: TPasUnusedWrite;
+  LKind: string;
+  LAsk, LTaken: TArray<Integer>;
+  LRefused: TArray<TPasSymbolRefusal>;
+  LEdits: TArray<TPasSymbolRemoval>;
+  LLine, LChar, LEndLine, LEndChar: Integer;
+  LSB: TStringBuilder;
+  LStart: UInt64;
+begin
+  if (AMsg.Params = nil) or
+     not AMsg.Params.TryGetValue<TJSONArray>('rows', LRowsJson) or
+     not AMsg.Params.TryGetValue<TJSONArray>('remove', LAsked) then
+    Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
+      'symbolsRemoval: rows and remove required'));
+  LStart := GetTickCount64;
+  if FCompletion = nil then
+    FCompletion := TLspCompletionEngine.Create(FPlatform, FSearchPaths,
+      FDefines, FCompilerVersion);
+  SyncCompletionOverlays;
+  LRows := nil;
+  for var LJ in LRowsJson do
+  begin
+    LRow := Default(TPasUnusedSymbol);
+    LRow.FileName := UriToPath(LJ.GetValue<string>('uri', ''));
+    LspToPasTree(LJ.GetValue<Integer>('line', 0),
+      LJ.GetValue<Integer>('character', 0), LRow.Line, LRow.Col);
+    LRow.Name := LJ.GetValue<string>('name', '');
+    LKind := LJ.GetValue<string>('kind', '');
+    if LKind = 'type' then
+      LRow.Kind := skType
+    else if LKind = 'variable' then
+      LRow.Kind := skVar
+    else if LKind = 'constant' then
+      LRow.Kind := skConst
+    else if LKind = 'field' then
+      LRow.Kind := skField
+    else if LKind = 'property' then
+      LRow.Kind := skProperty
+    else
+      LRow.Kind := skRoutine;
+    if LJ.TryGetValue<TJSONArray>('by', LArr) then
+      for var LB in LArr do
+        LRow.By := LRow.By + [LB.Value];
+    if LJ.TryGetValue<TJSONArray>('doubts', LArr) then
+      for var LD in LArr do
+        LRow.Doubts := LRow.Doubts + [LD.Value];
+    if LJ.TryGetValue<TJSONArray>('writeSites', LArr) then
+      for var LW in LArr do
+      begin
+        LWrite := Default(TPasUnusedWrite);
+        LWrite.FileName := UriToPath(LW.GetValue<string>('uri', ''));
+        LspToPasTree(LW.GetValue<Integer>('line', 0),
+          LW.GetValue<Integer>('character', 0), LWrite.Line, LWrite.Col);
+        LWrite.Computed := LW.GetValue<Boolean>('computed', False);
+        LRow.WriteSites := LRow.WriteSites + [LWrite];
+      end;
+    LRows := LRows + [LRow];
+  end;
+  LAsk := nil;
+  for var LA in LAsked do
+    LAsk := LAsk + [StrToIntDef(LA.Value, -1)];
+  LEdits := UnusedSymbolsRemoval(LRows, LAsk,
+    function(const AFileName: string; out AText: string): Boolean
+    begin
+      AText := LiveTextOf(AFileName);
+      Result := AText <> '';
+    end,
+    function(const AFileName, AText: string; out ATree: TPasTree;
+      out AErrors: Integer): Boolean
+    begin
+      Result := FCompletion.ParseTextAt(AFileName, AText, ATree, AErrors);
+    end, LTaken, LRefused);
+  LSB := TStringBuilder.Create;
+  try
+    LSB.Append('{"edits":[');
+    for var LIdx := 0 to High(LEdits) do
+    begin
+      PasTreeToLsp(LEdits[LIdx].Edit.Line, LEdits[LIdx].Edit.Col, LLine, LChar);
+      PasTreeToLsp(LEdits[LIdx].Edit.EndLine, LEdits[LIdx].Edit.EndCol,
+        LEndLine, LEndChar);
+      if LIdx > 0 then
+        LSB.Append(',');
+      LSB.Append(Format('{"uri":%s,"range":{"start":{"line":%d,' +
+        '"character":%d},"end":{"line":%d,"character":%d}},' +
+        '"oldText":%s,"newText":""}', [JsonQuote(PathToUri(
+        LEdits[LIdx].FileName)), LLine, LChar, LEndLine, LEndChar,
+        JsonQuote(LEdits[LIdx].Edit.OldText)]));
+    end;
+    LSB.Append('],"taken":[');
+    for var LIdx := 0 to High(LTaken) do
+      LSB.Append(IfThen(LIdx > 0, ',') + IntToStr(LTaken[LIdx]));
+    LSB.Append('],"refused":[');
+    for var LIdx := 0 to High(LRefused) do
+      LSB.Append(IfThen(LIdx > 0, ',') + Format('{"row":%d,"reason":%s}',
+        [LRefused[LIdx].Row, JsonQuote(LRefused[LIdx].Reason)]));
+    LSB.Append(']}');
+    Log(Format('symbolsRemoval: %d row(s), %d asked -> %d edit(s), %d ' +
+      'taken, %d refused, in %d ms', [Length(LRows), Length(LAsk),
+      Length(LEdits), Length(LTaken), Length(LRefused),
+      GetTickCount64 - LStart]));
+    for var LR in LRefused do
+      if (LR.Row >= 0) and (LR.Row <= High(LRows)) then
+        LogDetail(Format('symbolsRemoval: refused %s: %s',
+          [LRows[LR.Row].Name, LR.Reason]));
+    Result := BuildResponse(AMsg.IdJson, LSB.ToString);
   finally
     LSB.Free;
   end;
@@ -10996,6 +11141,8 @@ begin
         Exit(HandleUnusedSymbols(LMsg));
       if LMsg.Method = 'pastree/usesRemoval' then
         Exit(HandleUsesRemoval(LMsg));
+      if LMsg.Method = 'pastree/symbolsRemoval' then
+        Exit(HandleSymbolsRemoval(LMsg));
       if LMsg.Method = 'pastree/useUnit' then
         Exit(HandleUseUnit(LMsg));
       if LMsg.Method = 'textDocument/onTypeFormatting' then

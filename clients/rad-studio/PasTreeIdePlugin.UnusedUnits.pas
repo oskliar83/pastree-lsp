@@ -8,10 +8,17 @@ unit PasTreeIdePlugin.UnusedUnits;
   0.191.0's FindUnusedSymbols), unused `uses` entries, units nobody uses
   (project only), and whether rows with a doubt are shown at all. The
   answers go into ONE tab, "Unused", with a toolbar above it: Remove takes
-  the selected unit out, Remove All every one, Revert takes the last Remove
-  back. Declarations are shown, never removed (Alex, 2026-11-14: Remove for
-  them is deferred - a routine's declaration, its body, a forward and the
-  $IFDEF branches are one removal, and a row may be a namesake).
+  the selected row out, Remove All every one without a doubt, Revert takes
+  the last Remove back. Declarations are removed too since 0.91.0 (deferred
+  from 0.89.0 until the rows were right - Alex, 2026-11-14): the edits are
+  PasTree.SymbolEdit's, asked at the click (pastree/symbolsRemoval) - a
+  routine with its body, its forward and its `external` header, a type with
+  its methods' bodies, an only-assigned field with its assignments, and
+  every row in its `by` with it (removed alone, they no longer compile). A
+  row the server cannot remove safely (a directive inside, a declaration
+  split between $IFDEF branches, an include file, a computed value
+  assigned...) gets the note "not removable: <why>" and is not offered
+  again.
 
   WHAT IS OFFERED IS THE SERVER'S. It answers pastree/unusedSymbols,
   pastree/unusedUses (the unit in the editor, or every unit of the project
@@ -30,8 +37,9 @@ unit PasTreeIdePlugin.UnusedUnits;
   like any other doubt row, never removed silently. With declarations asked
   for, the search asks `afterRows` too (0.89.14): an entry needed only by
   unused declarations is listed with the note "goes with: unused X - remove
-  it with them", and neither Remove nor Remove All takes it - removed
-  before them, they no longer compile; declarations are removed by hand.
+  it with them", and neither Remove nor Remove All takes it alone - removed
+  before them, they no longer compile. A Remove that takes every
+  declaration it names takes it too (0.91.0).
 
   THE TREE: a title row with the counts, then a row per part searched that
   found anything - "declarations (N)", "units in uses (N)", "units nobody
@@ -551,7 +559,8 @@ begin
     (AEntry.By = nil);
 end;
 
-// Whether ANode has anything Remove takes out. A declaration never has.
+// Whether ANode has anything Remove takes out: no doubt, and for a
+// declaration no refusal met by an earlier Remove.
 function NodeRemovable(ANode: Integer): Boolean;
 var
   LIdx: Integer;
@@ -560,7 +569,8 @@ begin
     nkEntry: Result := EntryRemovable(GTab.Answer.Entries[LIdx]);
     nkUnit: Result := GTab.Answer.Units[LIdx].Doubts = nil;
   else
-    Result := False;
+    Result := (GTab.Answer.Symbols[LIdx].Doubts = nil) and
+      (GTab.Answer.Symbols[LIdx].Refused = '');
   end;
 end;
 
@@ -594,8 +604,7 @@ end;
 function RemovableNodes: TArray<Integer>;
 begin
   Result := nil;
-  for var LNode := 0 to Length(GTab.Answer.Entries) +
-    Length(GTab.Answer.Units) - 1 do
+  for var LNode := 0 to NodeCount - 1 do
     if not NodeRemoved(LNode) and NodeRemovable(LNode) then
       Result := Result + [LNode];
 end;
@@ -873,6 +882,8 @@ var
       LSymbol.FilePath, LSymbol.Row), LSymbol.Col, LSymbol.Len, LTag,
       LSymbol.TypeSpans), AParent);
     GTab.RowNode.AddOrSetValue(LRowPtr, [ANode]);
+    GTab.ShownNode := GTab.ShownNode + [ANode];
+    GTab.ShownRow := GTab.ShownRow + [LRowPtr];
     // The declared name, to put the caret on it at the place a note names.
     LName := LSymbol.Name;
     if Pos('<', LName) > 0 then
@@ -880,6 +891,8 @@ var
     LName := Copy(LName, LastDelimiter('.', LName) + 1, MaxInt);
     for var LDoubt in LSymbol.Doubts do
       Note(ANode, 'doubt: ', ShortDoubt(LDoubt), LRowPtr, LName);
+    if LSymbol.Refused <> '' then
+      Note(ANode, 'not removable: ', LSymbol.Refused, LRowPtr, LName);
   end;
 
   procedure DeclarationsPart;
@@ -1142,6 +1155,9 @@ begin
   for var LIdx := 0 to High(Result.Units) do
     Result.Units[LIdx].ListedBy := Copy(GTab.Answer.Units[LIdx].ListedBy);
   Result.Symbols := Copy(GTab.Answer.Symbols);
+  for var LIdx := 0 to High(Result.Symbols) do
+    Result.Symbols[LIdx].WriteSites :=
+      Copy(GTab.Answer.Symbols[LIdx].WriteSites);
 end;
 
 { The rows of GTab.Answer moved to where AEdits (one Remove, sorted, in the
@@ -1166,12 +1182,22 @@ begin
             GTab.Answer.Units[LU].ListedBy[LB].Col,
             GTab.Answer.Units[LU].ListedBy[LB].Len, LEdit.Row, LEdit.Col,
             LEdit.OldText, LEdit.NewText);
-    // A declaration is never inside a uses clause: only shifted.
+    // A declaration left is never inside an edit (an edit inside a
+    // declaration removes it): only shifted - and so are the assignments
+    // of an only-assigned one, which Remove finds by their place.
     for var LS := 0 to High(GTab.Answer.Symbols) do
+    begin
       if SameText(GTab.Answer.Symbols[LS].FilePath, LEdit.FilePath) then
         MapPosition(GTab.Answer.Symbols[LS].Row, GTab.Answer.Symbols[LS].Col,
           GTab.Answer.Symbols[LS].Len, LEdit.Row, LEdit.Col, LEdit.OldText,
           LEdit.NewText);
+      for var LW := 0 to High(GTab.Answer.Symbols[LS].WriteSites) do
+        if SameText(GTab.Answer.Symbols[LS].WriteSites[LW].FilePath,
+           LEdit.FilePath) then
+          MapPosition(GTab.Answer.Symbols[LS].WriteSites[LW].Row,
+            GTab.Answer.Symbols[LS].WriteSites[LW].Col, 1, LEdit.Row,
+            LEdit.Col, LEdit.OldText, LEdit.NewText);
+    end;
   end;
 end;
 
@@ -1188,8 +1214,10 @@ end;
   in a unit leaving the project too - now or with an earlier Remove. An
   entry in a unit leaving the project is left: the file goes. A name asked
   twice in one file (an unused entry naming a unit nobody uses) is asked
-  once. A declaration has nothing to remove. }
-function RemovalFiles(const ANodes: TArray<Integer>;
+  once. A declaration is not removed from here (pastree/symbolsRemoval).
+  AFreed: entries that go with the declarations of this Remove - taken
+  although they carry By. }
+function RemovalFiles(const ANodes, AFreed: TArray<Integer>;
   out AUnits: TArray<string>): TArray<TLspRemovalFile>;
 var
   LByFile: TDictionary<string, Integer>;   // lower-cased path -> index
@@ -1231,9 +1259,14 @@ begin
     for var LNode in ANodes do
       case NodeKind(LNode, LIdx) of
         nkEntry:
-          if EntryRemovable(GTab.Answer.Entries[LIdx]) then
-            Add(GTab.Answer.Entries[LIdx].FilePath,
-              GTab.Answer.Entries[LIdx].UnitName);
+          begin
+            var LFreed := False;
+            for var LF in AFreed do
+              LFreed := LFreed or (LF = LNode);
+            if EntryRemovable(GTab.Answer.Entries[LIdx]) or LFreed then
+              Add(GTab.Answer.Entries[LIdx].FilePath,
+                GTab.Answer.Entries[LIdx].UnitName);
+          end;
         nkUnit:
           for var LBy in GTab.Answer.Units[LIdx].ListedBy do
             if not LBy.IsProgram then
@@ -1375,7 +1408,11 @@ begin
   SelectNode(LNext);
 end;
 
-procedure StartRemoval(const ANodes: TArray<Integer>);
+{ The `uses` part of a Remove of ANodes - entries and units nobody uses -
+  asked of pastree/usesRemoval, then the whole Remove made with
+  ASymbolEdits (the declarations' edits, already asked) beside them. }
+procedure StartUsesRemoval(const ANodes, AFreed: TArray<Integer>;
+  const ASymbolEdits: TArray<TLspUsesEdit>);
 var
   LFiles: TArray<TLspRemovalFile>;
   LUnits: TArray<string>;
@@ -1383,15 +1420,16 @@ var
   LHasUnits: Boolean;
   LIdx: Integer;
 begin
-  LFiles := RemovalFiles(ANodes, LUnits);
+  LFiles := RemovalFiles(ANodes, AFreed, LUnits);
   LHasUnits := False;
   for var LNode in ANodes do
     if NodeKind(LNode, LIdx) = nkUnit then
       LHasUnits := True;
   if LFiles = nil then
   begin
-    // A unit only the program names: RemoveFile is all there is to do.
-    ApplyRemoval(ANodes, nil, LUnits);
+    // A unit only the program names: RemoveFile is all there is to do -
+    // or declarations alone.
+    ApplyRemoval(ANodes, ASymbolEdits, LUnits);
     Exit;
   end;
   GTab.Busy := True;
@@ -1429,7 +1467,140 @@ begin
           for var LS in AAnswer.Refused do
             LogDiagnostic('an entry stays, remove it by hand: ' + LS);
         end;
-        ApplyRemoval(ANodes, AAnswer.Edits, LUnits);
+        ApplyRemoval(ANodes, ASymbolEdits + AAnswer.Edits, LUnits);
+      except
+        on E: Exception do
+        begin
+          UpdateButtons;
+          LogDiagnostic(Format('Remove failed: %s: %s', [E.ClassName,
+            E.Message]));
+        end;
+      end;
+    end);
+end;
+
+{ The entries that go with declarations: each `uses` entry left whose
+  every By (the declarations only it is needed by) is in ANames or was
+  removed before - removed with them now, it is no longer needed. }
+function FreedEntries(const ANames: TArray<string>): TArray<Integer>;
+var
+  LGone: TDictionary<string, Boolean>;
+  LAll: Boolean;
+begin
+  Result := nil;
+  LGone := TDictionary<string, Boolean>.Create;
+  try
+    for var LName in ANames do
+      LGone.AddOrSetValue(LowerCase(LName), True);
+    for var LIdx := 0 to High(GTab.Answer.Symbols) do
+      if NodeRemoved(SymbolNode(LIdx)) then
+        LGone.AddOrSetValue(LowerCase(GTab.Answer.Symbols[LIdx].Name), True);
+    for var LIdx := 0 to High(GTab.Answer.Entries) do
+    begin
+      var LEntry := GTab.Answer.Entries[LIdx];
+      if NodeRemoved(LIdx) or (LEntry.By = nil) or (LEntry.Doubts <> nil) or
+         (LEntry.Refused <> '') then
+        Continue;
+      LAll := True;
+      for var LBy in LEntry.By do
+        LAll := LAll and LGone.ContainsKey(LowerCase(LBy));
+      if LAll then
+        Result := Result + [LIdx];
+    end;
+  finally
+    LGone.Free;
+  end;
+end;
+
+{ A Remove of ANodes. Declarations among them go first to
+  pastree/symbolsRemoval with every declaration row left (what goes with
+  one is found among them), and the answer decides: the rows it takes - the
+  asked ones and what goes with them - join the Remove, with the entries
+  they free; a refused row keeps its reason as a note and is not offered
+  again. Then the entries and units, as before. }
+procedure StartRemoval(const ANodes: TArray<Integer>);
+var
+  LAsked, LOthers, LSentNode, LAsk: TArray<Integer>;
+  LSent: TArray<TLspUnusedSymbol>;
+  LGeneration, LIdx: Integer;
+begin
+  LAsked := nil;
+  LOthers := nil;
+  for var LNode in ANodes do
+    if NodeKind(LNode, LIdx) = nkSymbol then
+      LAsked := LAsked + [LNode]
+    else
+      LOthers := LOthers + [LNode];
+  if LAsked = nil then
+  begin
+    StartUsesRemoval(ANodes, nil, nil);
+    Exit;
+  end;
+  LSent := nil;
+  LSentNode := nil;
+  LAsk := nil;
+  for var LI := 0 to High(GTab.Answer.Symbols) do
+    if not NodeRemoved(SymbolNode(LI)) then
+    begin
+      for var LA in LAsked do
+        if LA = SymbolNode(LI) then
+          LAsk := LAsk + [Length(LSent)];
+      LSent := LSent + [GTab.Answer.Symbols[LI]];
+      LSentNode := LSentNode + [SymbolNode(LI)];
+    end;
+  GTab.Busy := True;
+  UpdateButtons;
+  LGeneration := GTab.Generation;
+  LspSymbolsRemoval(GTab.TitleFile, LSent, LAsk,
+    procedure(ASuccess: Boolean; const AAnswer: TLspSymbolsRemovalAnswer;
+      const AError: string)
+    var
+      LTaken, LFreed: TArray<Integer>;
+      LNames: TArray<string>;
+      LSym: Integer;
+    begin
+      if not UseTab or (LGeneration <> GTab.Generation) then
+        Exit;
+      GTab.Busy := False;
+      try
+        if not ASuccess then
+        begin
+          UpdateButtons;
+          TellUser('Nothing was removed: ' + AError, mtError);
+          Exit;
+        end;
+        for var LR in AAnswer.Refused do
+          if (LR.Row >= 0) and (LR.Row <= High(LSentNode)) then
+          begin
+            NodeKind(LSentNode[LR.Row], LSym);
+            GTab.Answer.Symbols[LSym].Refused := LR.Reason;
+          end;
+        LTaken := nil;
+        LNames := nil;
+        for var LT in AAnswer.Taken do
+          if (LT >= 0) and (LT <= High(LSentNode)) then
+          begin
+            LTaken := LTaken + [LSentNode[LT]];
+            LNames := LNames + [LSent[LT].Name];
+          end;
+        LspLogToServer(Format('unused: Remove - %d declaration(s) asked, %d ' +
+          'taken with what goes with them, %d refused, %d edit(s)',
+          [Length(LAsk), Length(LTaken), Length(AAnswer.Refused),
+          Length(AAnswer.Edits)]));
+        if (LTaken = nil) and (LOthers = nil) then
+        begin
+          // Nothing to remove: say why when one row was asked.
+          UpdateButtons;
+          Report;
+          if Length(LAsk) = 1 then
+            SelectNode(LSentNode[LAsk[0]]);
+          if (Length(LAsk) = 1) and (AAnswer.Refused <> nil) then
+            TellUser(LSent[LAsk[0]].Name + ' cannot be removed: ' +
+              AAnswer.Refused[0].Reason, mtInformation);
+          Exit;
+        end;
+        LFreed := FreedEntries(LNames);
+        StartUsesRemoval(LOthers + LFreed + LTaken, LFreed, AAnswer.Edits);
       except
         on E: Exception do
         begin
@@ -1476,7 +1647,6 @@ end;
 procedure RemoveClick;
 var
   LSelected, LNodes: TArray<Integer>;
-  LIdx: Integer;
 begin
   if not UseTab or GTab.Busy then
     Exit;
@@ -1490,19 +1660,17 @@ begin
       if NodeRemovable(LNode) then
         LNodes := LNodes + [LNode];
     if LSelected = nil then
-      TellUser('Select a unit in the ' + GTab.Caption + ' tab first: ' +
-        'Remove takes out the selected one, Remove All every one.',
-        mtInformation)
+      TellUser('Select a row in the ' + GTab.Caption + ' tab first: ' +
+        'Remove takes out the selected one, Remove All every one without ' +
+        'a note.', mtInformation)
     else if LNodes = nil then
     begin
       if Length(LSelected) = 1 then
-        TellUser(NodeName(LSelected[0]) + IfThen(NodeKind(LSelected[0],
-          LIdx) = nkSymbol, ' is a declaration - declarations are only ' +
-          'shown here, nothing removes them.', ' has a note - it stays.'),
+        TellUser(NodeName(LSelected[0]) + ' has a note - it stays.',
           mtInformation)
       else
-        TellUser('Nothing there can be removed: declarations are only ' +
-          'shown, and every unit has a note.', mtInformation);
+        TellUser('Nothing there can be removed: every row has a note.',
+          mtInformation);
     end
     else
       StartRemoval(LNodes);

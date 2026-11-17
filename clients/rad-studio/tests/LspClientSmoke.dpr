@@ -5310,6 +5310,56 @@ var
       Result.AddPair('scope', AScope);
   end;
 
+  // One pastree/symbolsRemoval row: the name at ALine:AChar (0-based) of
+  // AFile, with an assignment of it at AWriteLine:AWriteChar when that is
+  // not negative, and ADoubt as its one doubt when not ''.
+  function SymbolRow(const AFile, AName, AKind: string; ALine,
+    AChar: Integer; AWriteLine: Integer = -1; AWriteChar: Integer = 0;
+    const ADoubt: string = ''): TJSONObject;
+  var
+    LSites, LDoubts: TJSONArray;
+    LSite: TJSONObject;
+  begin
+    Result := TJSONObject.Create;
+    Result.AddPair('uri', PathToLspUri(TPath.Combine(LDir, AFile)));
+    Result.AddPair('line', TJSONNumber.Create(ALine));
+    Result.AddPair('character', TJSONNumber.Create(AChar));
+    Result.AddPair('name', AName);
+    Result.AddPair('kind', AKind);
+    Result.AddPair('by', TJSONArray.Create);
+    LDoubts := TJSONArray.Create;
+    if ADoubt <> '' then
+      LDoubts.Add(ADoubt);
+    Result.AddPair('doubts', LDoubts);
+    LSites := TJSONArray.Create;
+    if AWriteLine >= 0 then
+    begin
+      LSite := TJSONObject.Create;
+      LSite.AddPair('uri', PathToLspUri(TPath.Combine(LDir, AFile)));
+      LSite.AddPair('line', TJSONNumber.Create(AWriteLine));
+      LSite.AddPair('character', TJSONNumber.Create(AWriteChar));
+      LSite.AddPair('computed', TJSONBool.Create(False));
+      LSites.AddElement(LSite);
+    end;
+    Result.AddPair('writeSites', LSites);
+  end;
+
+  function SymbolsRemovalParams(const ARows: array of TJSONObject;
+    const ARemove: array of Integer): TJSONObject;
+  var
+    LRows, LRemove: TJSONArray;
+  begin
+    LRows := TJSONArray.Create;
+    for var LRow in ARows do
+      LRows.AddElement(LRow);
+    LRemove := TJSONArray.Create;
+    for var LI in ARemove do
+      LRemove.Add(LI);
+    Result := TJSONObject.Create;
+    Result.AddPair('rows', LRows);
+    Result.AddPair('remove', LRemove);
+  end;
+
   function RemovalParams(const AFile: string;
     const ANames: array of string): TJSONObject;
   var
@@ -5448,6 +5498,9 @@ begin
       GResultJson.Contains('"how":"onlyAssigned"') and
       GResultJson.Contains('"why":"only assigned (ULoc.pas:6), never read"'),
       'L: only assigned, never read - a row, with how and why');
+    Check(GOk and GResultJson.Contains('"writeSites":[{"uri":') and
+      GResultJson.Contains('"line":5,"character":2,"computed":false}]'),
+      'L: its assignment placed, for Remove');
     Check(GOk and not GResultJson.Contains('"name":"N","kind":"procedure",' +
       '"doubts":[],"how"'), 'N: nothing uses it - no how');
     // `exported` (0.89.13; on by default since 0.89.15, PasTree 0.207.0)
@@ -5509,6 +5562,33 @@ begin
     Check(GOk and GResultJson.Contains('"edits":[]') and
       GResultJson.Contains('"missing":["UA.pas: UGone"]'),
       'UA: a name no clause holds is missing, and no edit');
+
+    // Remove of declarations (0.91.0, PasTree 0.209.0's SymbolEdit): the
+    // edits on the text as it is now. N goes with its interface header and
+    // its body; L, only assigned, with its section and its assignment; a
+    // row with a doubt and a row no longer at its place are refused.
+    LParams := SymbolsRemovalParams([
+      SymbolRow('UNobody.pas', 'N', 'procedure', 2, 10),
+      SymbolRow('ULoc.pas', 'L', 'variable', 3, 4, 5, 2),
+      SymbolRow('UNobody.pas', 'Dead', 'procedure', 5, 10, -1, 0,
+        'a doubt'),
+      SymbolRow('UNobody.pas', 'N', 'procedure', 4, 10)], [0, 1, 2, 3]);
+    Check(Ask('pastree/symbolsRemoval', LParams), 'symbolsRemoval answered');
+    Check(GOk and GResultJson.Contains('"oldText":"procedure N;\r\n"') and
+      GResultJson.Contains('"oldText":"procedure N; begin end;\r\n"'),
+      'N: its header and its body, each with its line');
+    Check(GOk and GResultJson.Contains('"oldText":"var L: Integer;\r\n"') and
+      GResultJson.Contains('"oldText":"  L := 1;\r\n"'),
+      'L: its var section and its assignment');
+    Check(GOk and GResultJson.Contains('"taken":[0,1]'),
+      'N and L are taken');
+    Check(GOk and GResultJson.Contains('{"row":2,"reason":"it has a doubt') and
+      GResultJson.Contains('{"row":3,"reason":"UNobody.pas:5 no longer ' +
+      'declares N - the file has changed'),
+      'refused: the row with a doubt, the row not at its place');
+    LParams := TJSONObject.Create;
+    Check(Ask('pastree/symbolsRemoval', LParams) and not GOk,
+      'symbolsRemoval without rows is refused');
 
     LParams := UnusedParams('');
     Check(Ask('pastree/unreferencedUnits', LParams),

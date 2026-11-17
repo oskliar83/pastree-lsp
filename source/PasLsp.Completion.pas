@@ -37,6 +37,7 @@ uses
   PasTree.Platforms,
   PasTree.SourceManager,
   PasTree.Preprocessor,
+  PasTree.Ast,
   PasTree.Sema.Project,
   PasTree.Sema.Nav,
   PasTree.Format,
@@ -265,6 +266,11 @@ type
     function UsesRemovalAt(const AFileName, AText: string;
       const ANames: TArray<string>; out ARefused, AMissing: TArray<string>)
       : TArray<TPasUsesRemoval>;
+    { AText of AFileName parsed as UsesRemovalAt parses it, and the count
+      of its parse errors - Remove of unused declarations
+      (PasTree.SymbolEdit's TPasRemovalParse). }
+    function ParseTextAt(const AFileName, AText: string; out ATree: TPasTree;
+      out AErrors: Integer): Boolean;
   end;
 
 { How many values the enumerated type ASym of model AMid declares, its
@@ -281,7 +287,6 @@ uses
   System.Generics.Collections,
   System.Generics.Defaults,
   PasTree.Parser,
-  PasTree.Ast,
   PasTree.Sema.Model,
   PasTree.Sema.Resolver,
   PasTree.Sema.Builtins,
@@ -2364,6 +2369,17 @@ begin
   LPre := FPreprocessor.ProcessText(AFileName, AText);
   LTree := TPasParser.ParseFile(LPre, LDiags);
   Result := UsesRemovalByName(LTree, ANames, ARefused, AMissing);
+end;
+
+function TLspCompletionEngine.ParseTextAt(const AFileName, AText: string;
+  out ATree: TPasTree; out AErrors: Integer): Boolean;
+var
+  LDiags: TArray<TPasParseDiag>;
+begin
+  ATree := TPasParser.ParseFile(FPreprocessor.ProcessText(AFileName, AText),
+    LDiags);
+  AErrors := Length(LDiags);
+  Result := True;
 end;
 
 end.

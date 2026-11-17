@@ -552,7 +552,10 @@ const
   /// 0.208.0 (2026-11-17): PasTree.Sema.ImportGraph and
   /// TPasWorkspace.ImportGraph - pastree/importGraph; an older library has
   /// neither (a compile error).
-  cMinPasTreeVersion = '0.208.0';
+  /// 0.209.0 (2026-11-17): PasTree.SymbolEdit (pastree/symbolsRemoval) and
+  /// TPasUnusedSymbol.WriteSites (unusedSymbols' `writeSites`); an older
+  /// library has neither (a compile error).
+  cMinPasTreeVersion = '0.209.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
