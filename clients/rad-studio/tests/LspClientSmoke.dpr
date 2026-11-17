@@ -5450,11 +5450,21 @@ begin
       'L: only assigned, never read - a row, with how and why');
     Check(GOk and not GResultJson.Contains('"name":"N","kind":"procedure",' +
       '"doubts":[],"how"'), 'N: nothing uses it - no how');
-    // `exported` (0.89.13, PasTree 0.205.0) is a package's units: a
-    // program's analysis holds none, so no row is exported.
+    // `exported` (0.89.13; on by default since 0.89.15, PasTree 0.207.0)
+    // is a package's units, whose interface is used, not weighed: a
+    // program's analysis holds none, so nothing is counted as exported, and
+    // no row carries an `api` member any more. `exported: false` answers
+    // the same here.
     Check(GOk and not GResultJson.Contains('"api":') and
-      not GResultJson.Contains('exported - '),
-      'a program''s analysis: no row exported');
+      not GResultJson.Contains('exported - ') and
+      not GResultJson.Contains('exported declarations'),
+      'a program''s analysis: nothing exported, no api');
+    LParams := UnusedParams('project');
+    LParams.AddPair('exported', TJSONBool.Create(False));
+    Check(Ask('pastree/unusedSymbols', LParams) and GOk and
+      GResultJson.Contains('"name":"N","kind":"procedure"') and
+      not GResultJson.Contains('exported declarations'),
+      'unusedSymbols with exported false: the same rows');
     LParams := UnusedParams('library');
     Check(Ask('pastree/unusedSymbols', LParams) and not GOk,
       'unusedSymbols: a scope other than unit or project is refused');

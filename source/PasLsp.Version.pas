@@ -544,7 +544,12 @@ const
   /// 0.206.0 (2026-11-16): FindUnusedUses' loAfterRows and
   /// TPasUnusedUse.By - unusedUses' `afterRows` and `by`; an older library
   /// has neither (a compile error).
-  cMinPasTreeVersion = '0.206.0';
+  /// 0.207.0 (2026-11-17): a library's exported declaration is used, not a
+  /// row (usExported, which cSkipWord names; a package's units exported by
+  /// default, TPasUnusedLibrary.PackagesInternal for `exported: false`) -
+  /// an older library lists them as rows with a doubt, and has no
+  /// PackagesInternal (a compile error).
+  cMinPasTreeVersion = '0.207.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

@@ -8908,13 +8908,16 @@ end;
   ("usedOnlyByUnused", "onlyAssigned"), `by` (the rows using it, "" for
   itself), `writes` (the assignments, "File.pas:12") and `why`, the
   sentence a client shows under the row; a row nothing uses has none.
-  `exported` (PasTree 0.205.0, 0.89.13; off unless asked): the units a
-  package (.dpk) of the analysis contains are a library's
-  (TPasUnusedLibrary) - a declaration of their interface nothing here uses
-  stays a row with the doubt "exported" and `api` "exported", a row only
-  such rows use `api` "byExported". Off by default: a design-time package
-  is no library - on this project's IDE plugin it put the doubt on 24 of
-  31 rows that had none, and the Unused tab hides rows with a doubt. }
+  `exported` (PasTree 0.205.0, 0.89.13; on by default since PasTree
+  0.207.0, 0.89.15): the units a package (.dpk) of the analysis contains
+  are a library's (TPasUnusedLibrary) - a declaration of their interface
+  is used, not weighed, and counted in `skipped` ("exported declarations
+  of a package or a library unit"); what only it uses is used with it.
+  `exported: false`
+  weighs a package's units as an application's (PackagesInternal): a
+  design-time package only the IDE loads, whose interface no other
+  program calls. Before 0.89.15 an exported row stayed a row with the
+  doubt "exported" and an `api` member - gone. }
 
 // The members a row made by rows adds; '' for one nothing uses.
 function UnusedHowJson(const ARow: TPasUnusedSymbol): string;
@@ -8964,7 +8967,8 @@ const
     'attribute constructors', 'for-in methods', 'generated units',
     'units that replace a library unit',
     'Register procedures of a package (the IDE calls them)',
-    'parameters of a routine whose signature is fixed');
+    'parameters of a routine whose signature is fixed',
+    'exported declarations of a package or a library unit');
 var
   LPath, LScope, LKind, LName, LSkipped: string;
   LMids: TArray<Integer>;
@@ -8975,7 +8979,6 @@ var
   LSB: TStringBuilder;
   LStart: UInt64;
   LLib: TPasUnusedLibrary;
-  LApi: string;
 begin
   LPath := DocPathOf(AMsg.Params);
   LScope := 'unit';
@@ -8983,7 +8986,8 @@ begin
   if AMsg.Params <> nil then
   begin
     LScope := AMsg.Params.GetValue<string>('scope', 'unit');
-    LLib.Packages := AMsg.Params.GetValue<Boolean>('exported', False);
+    LLib.PackagesInternal := not AMsg.Params.GetValue<Boolean>('exported',
+      True);
   end;
   if (LScope <> 'unit') and (LScope <> 'project') then
     Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
@@ -9049,20 +9053,13 @@ begin
       LHit.HiTo := LHit.HiFrom + Length(LName) - LAt;
       if LRows[LIdx].Doubts <> nil then
         Inc(LDoubtful);
-      case LRows[LIdx].Api of
-        uaExported: LApi := ',"api":"exported"';
-        uaByExported: LApi := ',"api":"byExported"';
-      else
-        LApi := '';
-      end;
       if LIdx > 0 then
         LSB.Append(',');
       LSB.Append(WithMembers(WithTypeSpans(HitLocationJson(LHit),
         LineTypeSpansJson(LHit.FilePath, LHit.Line)),
-        Format(',"name":%s,"kind":%s,"doubts":%s%s%s',
+        Format(',"name":%s,"kind":%s,"doubts":%s%s',
         [JsonQuote(LRows[LIdx].Name), JsonQuote(LKind),
-         StringsJson(LRows[LIdx].Doubts), UnusedHowJson(LRows[LIdx]),
-         LApi])));
+         StringsJson(LRows[LIdx].Doubts), UnusedHowJson(LRows[LIdx])])));
     end;
     LSkipped := '';
     for var LSkip := Low(TPasUnusedSkip) to High(TPasUnusedSkip) do
