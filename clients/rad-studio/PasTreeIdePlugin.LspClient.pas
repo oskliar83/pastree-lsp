@@ -148,6 +148,13 @@ type
     /// </summary>
     UndeclaredBehindMissingUnits: Boolean;
     /// <summary>
+    /// Sent as closure=true: the server sends pastree/closure - the files its
+    /// analysis compiles - after every analysis that changed them. The plugin
+    /// routes a file to the active project by it (TLspSessionPool); False
+    /// sends nothing, the server's default.
+    /// </summary>
+    Closure: Boolean;
+    /// <summary>
     /// Sent as "formatting" when not empty: the formatter's style as a JSON
     /// object text (PasTreeIdePlugin.FormatText.FormatRequestOptions) - what
     /// the server puts a .dcu's generated text through (FormatDcuText).
@@ -633,6 +640,8 @@ begin
     LResult.AddPair('lightLibraries', TJSONBool.Create(False));
   if UndeclaredBehindMissingUnits then
     LResult.AddPair('undeclaredBehindMissingUnits', TJSONBool.Create(True));
+  if Closure then
+    LResult.AddPair('closure', TJSONBool.Create(True));
   if Formatting <> '' then
   begin
     LFormatting := TJSONObject.ParseJSONValue(Formatting);

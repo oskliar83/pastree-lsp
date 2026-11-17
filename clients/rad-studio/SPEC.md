@@ -1741,16 +1741,47 @@ group, opened in the editor, is a request for that project's analysis, and the
 pool starts its session. This is the only reading that matches what the user
 sees: the module is on screen, so the features apply to it.
 
-### Routing: by the file, not by the active project
+### Routing: by the file, the active project first
 
-`IOTAProjectGroup.FindProject(FileName)` (`ToolsAPI.pas:3997`) answers "which
-project owns this file", checking the active project first and then the rest of
-the group. Every entry point in `PasTreeIdePlugin.LspSession` already takes the
-file name, so routing is `FindProject` -> key -> session.
+Every entry point in `PasTreeIdePlugin.LspSession` takes the file name, and
+`TLspSessionPool.OwningProjectFile` picks the project that answers for it, in
+this order (0.92.0):
 
-A file no project claims - an RTL unit, a file opened from disk - has no owner
-to route to and goes to the ACTIVE session, which is both the only defensible
-guess and today's behaviour.
+1. The ACTIVE project, when its analysis compiles the file - or when its server
+   has not said yet (it says within seconds of opening).
+2. The project whose `.dproj` lists the file: `IOTAProjectGroup.FindProject`
+   (`ToolsAPI.pas:3997`).
+3. Any other project whose analysis compiles it - a unit of a non-active
+   project reached through its search path, which no `.dproj` lists.
+4. Nobody: the active session, the only defensible guess for a file opened
+   from disk.
+
+"Compiles" is the server's own answer: started with `closure: true`, it sends
+`pastree/closure` - every unit and include file of its analysis - whenever that
+set changes, and `TLspSession.StoreClosure` keeps it and drops every cached
+route.
+
+**Why the active project comes first** (Alex, 2026-11-17). The same unit means
+different things in two projects of a group: another platform (a pointer's size
+in the hover's `SizeOf` line - a client on Win32 and its server on Win64 share
+data modules), other defines (the inactive-code grey), another program as the
+import graph's root. The user picked the active project; a unit it compiles is
+answered as that project compiles it. To see another project's view, make that
+project active.
+
+**What 0.31.1-0.91.0 did instead, and why it was wrong.** `FindProject` alone.
+It sees the `.dproj` LISTS, never a search path, so a data module the active
+server compiles through its search path while the client's `.dproj` lists it
+was answered by the client project: its platform, its defines, its program as
+the import graph's root (the client program's units in the graph of a unit
+the server compiles, found by Alex the same day). Worse, any request from that file STARTED the listing
+project's whole server - a 3750-unit analysis the user never asked for. The
+"known limit" recorded below for 0.31.1 described the case where both projects
+list a file; the search-path case was never written down. 0.38.4 met the same
+blind spot in the document sync and solved it by broadcasting every buffer,
+noting that "the client cannot know a project's closure" - true of the client
+alone; the server knew it all along, and `pastree/closure` is that answer
+handed over.
 
 This also fixes a defect that predates groups: with a single session keyed off
 the active project, a Ctrl+Click inside a module of a NON-active project was
@@ -1842,12 +1873,14 @@ the alternative is a wait the user did not ask for.
    group changes. And a repaint may not start servers, so the diagnostics and
    sent-text paths route with `ACreate=False`.
 
-   Known limit, accepted: `FindProject` answers relative to the active
-   project, so a file BOTH projects compile routes to whichever was active
+   Known limit, accepted then: `FindProject` answers relative to the active
+   project, so a file BOTH projects list routes to whichever was active
    when it was first asked about, and a unit moved between projects
-   mid-session keeps its old route until something clears the cache. Both are
-   cheap to correct by switching projects, and neither can produce an answer
-   from a project that does not contain the file.
+   mid-session keeps its old route until something clears the cache.
+   **Superseded, 0.92.0** - see "Routing" above: a file compiled only through
+   the active project's SEARCH PATH never reached it at all, and that was not
+   in this list. The active project is now asked first by its closure, and a
+   closure arriving drops the cache.
 
    Superseded, 0.38.4: per-file routing of the DOCUMENT SYNC is gone; the
    route cache still decides which server answers a request. Owner-only sync

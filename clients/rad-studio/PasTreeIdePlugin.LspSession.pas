@@ -1801,7 +1801,13 @@ type
     // Path -> the text that answer describes, split into lines (see
     // LspTryGetSemanticTokens); absent when nothing had been sent.
     FSemanticBase: TDictionary<string, TArray<string>>;
+    // THE FILES THIS PROJECT COMPILES - the server's last pastree/closure:
+    // full, lower-cased paths, units and include files. nil until the first
+    // one arrives; kept across a server restart, which sends its own once
+    // its analysis lands. Routing asks it (TLspSessionPool.OwningProjectFile).
+    FClosure: TDictionary<string, Boolean>;
     FDestroying: Boolean;
+    procedure StoreClosure(AParams: TJSONValue);
     function BuildOptions(const AProject: IOTAProject;
       out APlatform, AConfig: string): TLspInitOptions;
     function EnsureSession: Boolean;
@@ -1828,6 +1834,10 @@ type
     // Its client is inside a callback of its own connection - see
     // TLspClient.IsDispatching. Not to be freed until that unwinds.
     function IsDispatching: Boolean;
+    { Whether the server has said which files it compiles (pastree/closure),
+      and whether AKey - a full, lower-cased path - is one of them. }
+    function ClosureKnown: Boolean;
+    function InClosure(const AKey: string): Boolean;
     destructor Destroy; override;
     procedure Prewarm;
     /// <summary>
@@ -1988,13 +1998,14 @@ type
     // list that is being torn down. The same flag TLspSession keeps, for the
     // same reason, one level up.
     FDestroying: Boolean;
-    { ROUTE CACHE: lower-cased source path -> the .dproj that owns it, '' for
-      a file no project claims. IOTAProjectGroup.FindProject walks the group's
-      projects and their module lists, and the painted-diagnostics layer asks
-      per SYNTAX RUN - several hundred times per repaint on a full screen. A
-      dictionary read is what that path can afford; FindProject is not.
-      Cleared whenever the answer could have changed: the active project, the
-      session set, a group open or close. }
+    { ROUTE CACHE: lower-cased source path -> the .dproj that answers for it,
+      '' for a file no project claims. IOTAProjectGroup.FindProject walks the
+      group's projects and their module lists, and the painted-diagnostics
+      layer asks per SYNTAX RUN - several hundred times per repaint on a full
+      screen. A dictionary read is what that path can afford; FindProject is
+      not. Cleared whenever the answer could have changed: the active
+      project, the session set, a group open or close, a closure arriving
+      from any server (TLspSession.StoreClosure). }
     FRoutes: TDictionary<string, string>;
     FRoutedActive: string;
     function IndexOf(const AProjectFile: string): Integer;
@@ -2016,10 +2027,11 @@ type
       crash log is one per directory, and only follows a project that
       leaves the directory alone. }
     function DirectoryInUse(const ADir: string; AExcept: TLspSession): Boolean;
-    { The session that should answer for APath: the one whose project owns the
-      file, whether or not the IDE has that project selected. A file no
-      project claims - an RTL unit, a file opened from disk - has no owner to
-      route to and falls back to the ACTIVE session.
+    { The session that should answer for APath: the active project's when it
+      compiles the file, else the project's that lists or compiles it,
+      whether or not the IDE has that project selected - OwningProjectFile
+      has the order. A file no project claims - one opened from disk - falls
+      back to the ACTIVE session.
 
       ACreate=False never spawns a session object, which is what the document
       sync needs: "is this buffer mine" must not conjure a session for a
@@ -2503,7 +2515,39 @@ begin
   FreeAndNil(FSemanticTokens);
   FreeAndNil(FSemanticPending);
   FreeAndNil(FSemanticBase);
+  FreeAndNil(FClosure);
   inherited;
+end;
+
+function TLspSession.ClosureKnown: Boolean;
+begin
+  Result := Assigned(FClosure);
+end;
+
+function TLspSession.InClosure(const AKey: string): Boolean;
+begin
+  Result := Assigned(FClosure) and FClosure.ContainsKey(AKey);
+end;
+
+{ pastree/closure params -> FClosure, then every route is asked again: the
+  answer for any file may have moved to or from this project. }
+procedure TLspSession.StoreClosure(AParams: TJSONValue);
+var
+  LArr: TJSONArray;
+  LValue: TJSONValue;
+  LNew: TDictionary<string, Boolean>;
+begin
+  if (AParams = nil) or not AParams.TryGetValue<TJSONArray>('paths', LArr) then
+    Exit;
+  LNew := TDictionary<string, Boolean>.Create(LArr.Count);
+  for LValue in LArr do
+    // Lower-cased by the server already; again here, so a server that
+    // spelled one otherwise cannot make a file silently unroutable.
+    LNew.AddOrSetValue(LowerCase(LValue.Value), True);
+  FClosure.Free;
+  FClosure := LNew;
+  if Assigned(GPool) then
+    GPool.InvalidateRoutes;
 end;
 
 { publishDiagnostics params -> the per-file cache: uri, then per diagnostic
@@ -3080,6 +3124,9 @@ begin
     Result.NoLightLibraries := not LightLibrariesEnabled;
   // What the analysis reports, so fixed per server like the parsing mode.
   Result.UndeclaredBehindMissingUnits := UndeclaredBehindMissingUnitsEnabled;
+  // The files the analysis compiles, which routing asks first (see
+  // TLspSessionPool.OwningProjectFile).
+  Result.Closure := True;
   // The formatter's style, for the .dcu text the analysis reads (the
   // server's DcuTextFilter). Not a restart reason: a format request carries
   // the style itself, and the .dcu text follows at the next server start.
@@ -3249,6 +3296,11 @@ begin
         if AMethod = 'pastree/benchmarkDone' then
         begin
           HandleBenchmarkDone(AParams);
+          Exit;
+        end;
+        if AMethod = 'pastree/closure' then
+        begin
+          StoreClosure(AParams);
           Exit;
         end;
         // What the server says to the user - a configuration it could not
@@ -6282,11 +6334,31 @@ begin
       Exit(True);
 end;
 
+{ WHICH PROJECT ANSWERS FOR APATH (0.92.0) - in this order:
+
+  1. The ACTIVE project, when its analysis compiles the file (its server's
+     pastree/closure) - or when that server has not said yet: the active
+     project is the one the user is working in, and its analysis lands in
+     seconds, at which point StoreClosure asks every route again.
+  2. The project whose .dproj LISTS the file (IOTAProjectGroup.FindProject).
+  3. Any other project whose analysis compiles it, by its closure - a unit
+     of a non-active project reached through its search path, listed by no
+     .dproj.
+  4. Nobody: '' - SessionForFile falls back to the active session.
+
+  Until 0.92.0 this was FindProject alone, and FindProject sees the .dproj
+  lists only, never a search path: a unit the active project compiles
+  through its search path while another project of the group lists it (a
+  data module shared by a client and its server) was answered by the OTHER
+  project - its platform (a pointer's size in the hint), its defines (the
+  inactive-code grey), its program as the import graph's root - and asking
+  about it started that project's whole server. }
 function TLspSessionPool.OwningProjectFile(const APath: string): string;
 var
-  LKey: string;
+  LKey, LFull: string;
   LGroup: IOTAProjectGroup;
   LProject: IOTAProject;
+  LSession: TLspSession;
 begin
   Result := '';
   if APath = '' then
@@ -6294,15 +6366,34 @@ begin
   LKey := LowerCase(APath);
   if FRoutes.TryGetValue(LKey, Result) then
     Exit;
-  LGroup := GetProjectGroup;
-  if Assigned(LGroup) then
+  // The closure's keys are the server's PasFullPathKey: full and lower-cased.
+  try
+    LFull := LowerCase(TPath.GetFullPath(APath));
+  except
+    on EArgumentException do
+      LFull := LKey;
+  end;
+  if Assigned(GSession) and FSessions.Contains(GSession) and
+     (not GSession.ClosureKnown or GSession.InClosure(LFull)) then
+    Result := GSession.ProjectFile
+  else
   begin
-    // The ToolsAPI's own answer to "which project does this file belong to",
-    // and it checks the active project first, so the common case is also its
-    // fast case (ToolsAPI.pas:3997).
-    LProject := LGroup.FindProject(APath);
-    if Assigned(LProject) then
-      Result := LProject.FileName;
+    LGroup := GetProjectGroup;
+    if Assigned(LGroup) then
+    begin
+      // The ToolsAPI's own answer to "which project lists this file"
+      // (ToolsAPI.pas:3997).
+      LProject := LGroup.FindProject(APath);
+      if Assigned(LProject) then
+        Result := LProject.FileName;
+    end;
+    if Result = '' then
+      for LSession in FSessions do
+        if (LSession <> GSession) and LSession.InClosure(LFull) then
+        begin
+          Result := LSession.ProjectFile;
+          Break;
+        end;
   end;
   // A MISS IS CACHED TOO, as ''. Every RTL and VCL unit the user opens is a
   // miss, and they are exactly the files a repaint asks about most.
@@ -6403,13 +6494,10 @@ begin
   // next request or project switch after that dispatch unwound.
   DisposeDoomed;
   LActive := GetActiveProject;
-  { FindProject answers relative to WHICH PROJECT IS ACTIVE - it checks that
-    one first - so a file both projects of a group compile routes to whichever
-    was active when the question was first asked. Dropping the cache on every
-    switch is the cheap half of keeping that honest; the other half is that a
-    unit MOVED between projects mid-session is not noticed until something
-    else clears this, which is a trade recorded in SPEC.md rather than a
-    thing to fix here. }
+  { A route answers relative to WHICH PROJECT IS ACTIVE - it is asked first
+    (OwningProjectFile) - so every route is dropped on a switch. A unit
+    moved between projects mid-session is noticed when the closures that
+    lost and gained it arrive (StoreClosure drops them too). }
   if Assigned(LActive) and not SameText(FRoutedActive, LActive.FileName) then
   begin
     FRoutedActive := LActive.FileName;
@@ -6703,11 +6791,12 @@ end;
 
 { THE SESSION A REQUEST ABOUT A FILE GOES TO.
 
-  Routed by the FILE at the caret, not by the active project, and the
-  difference is a defect that predates groups: a Ctrl+Click inside a module of
-  a NON-active project used to be answered by the active project's server,
-  which has never heard of that file, so it resolved nothing - silently, and
-  reading exactly like "navigation does not work in this unit".
+  Routed by the FILE at the caret: to the active project when it compiles the
+  file, else to a project that lists or compiles it (OwningProjectFile). The
+  active project alone was a defect that predates groups: a Ctrl+Click inside
+  a module of a NON-active project was answered by a server that has never
+  heard of that file, so it resolved nothing - silently, and reading exactly
+  like "navigation does not work in this unit".
 
   Activate first, so the pool still tracks the active project (and prunes) on
   the ordinary request path, then route. A file no project owns falls back to
@@ -7973,7 +8062,7 @@ begin
   // The session that HOLDS this file is the one whose overlay is the text the
   // answer was computed from; the active one may never have been sent it.
   // Asked of every session's sent texts first, a dictionary each: finding
-  // the owner (SessionForFile -> IOTAProjectGroup.FindProject) for a file no
+  // the owner (SessionForFile, IOTAProjectGroup.FindProject on a miss) for a file no
   // session was sent - a library unit, most rows of a big reference list -
   // was a ToolsAPI search per file, and a unit's references list a
   // thousand files (2026-10-19). Only when two sessions hold the file does

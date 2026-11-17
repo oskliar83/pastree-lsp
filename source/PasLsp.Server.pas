@@ -55,6 +55,11 @@ unit PasLsp.Server;
                   also hides every real typo in the unit. Changes what the
                   analysis produces, so a client changes it by restarting
                   the server
+    "closure"     - True sends pastree/closure after an analysis whose file
+                  set differs from the last one sent: every unit and include
+                  file of the closure, so a client running one server per
+                  project can route a file to a project that compiles it
+                  (PublishClosure). False (the default) sends nothing
   A .dproj brings its own MainSource/search paths/defines/namespaces/aliases
   (TPasDProj - the same MSBuild evaluation the CLI tools use). Without a
   projectFile the open documents themselves become the analysis roots.
@@ -252,6 +257,10 @@ type
     // ReportUndeclaredBehindMissingUnits, on the session and on every bare
     // project alike.
     FUndeclaredBehindMissing: Boolean;
+    // The "closure" option (default False) and the `paths` array last sent in
+    // pastree/closure - see PublishClosure.
+    FClosureNotify: Boolean;
+    FClosureSent: string;
     // THE WORKSPACE ESCALATED (PasTree's decision D9): a query found a full
     // analysis cheaper than the library bodies it needed and rebuilt the
     // project in full. The session stays full from then on - FLightPaths is
@@ -525,6 +534,7 @@ type
     function IncludersOf(const APath: string; out AFirst: string): Integer;
     function IncluderMids(const APath: string): TArray<Integer>;
     procedure RefreshIncluders;
+    procedure PublishClosure;
     function IsInclude(const APath: string): Boolean;
     function ModuleIncludeNote: string;
     function DiskNewerThanAnalysis(const APath: string): Boolean;
@@ -1244,6 +1254,7 @@ begin
     FLightLibraries := AOptions.GetValue<Boolean>('lightLibraries', True);
     FUndeclaredBehindMissing :=
       AOptions.GetValue<Boolean>('undeclaredBehindMissingUnits', False);
+    FClosureNotify := AOptions.GetValue<Boolean>('closure', False);
   end;
   // The formatter's style: the `formatting` member, absent = the library's
   // default. Logged by ApplyFormatConfig once the log path is known - below.
@@ -2010,6 +2021,8 @@ begin
     LDone := LDone + Format('; stages %s %s',
       [FProject.StageTimings, MemoryLine]);
   Log(LDone);
+  // Before the diagnostics: the client routes the files they name by it.
+  PublishClosure;
   // A benchmark's run is the full one it started (StartAnalysis from
   // HandleBenchmark); an incremental one cannot be in between, since the
   // benchmark freed the project the incremental path needs.
@@ -2319,6 +2332,67 @@ begin
     end;
     FIncTables[LMid] := LNames;
     FIncKeys[LMid] := LKeys;
+  end;
+end;
+
+(* pastree/closure - OURS (0.92.0), sent only to a client that asked with the
+  "closure" option. The files this analysis compiles: every model's file and
+  every file a unit $I-includes - what AffectsAnalysis answers True for -
+  as full, lower-cased paths (PasFullPathKey), sorted, in one member (the
+  object's braces left out of this comment):
+    "paths": ["c:\\src\\foo.pas", ...]
+  The RAD Studio client runs one server per project of a group and routes a
+  file to the ACTIVE project whenever its closure has the file - a unit
+  compiled through the search path is in no .dproj's list, and the IDE's
+  FindProject sees the lists only. Sent after an analysis whose set differs
+  from the last one sent: typing changes no set, a `uses` edit or a rebuild
+  for another configuration may. Library units a light analysis never
+  loaded (reached only through a library's implementation) are not in it:
+  no project lists them either. *)
+procedure TLspServer.PublishClosure;
+var
+  LSet: TDictionary<string, Boolean>;
+  LKeys: TArray<string>;
+  LKey: string;
+  LSB: TStringBuilder;
+  LMid, LIdx, LIncludes: Integer;
+begin
+  if not FClosureNotify or (FProject = nil) then
+    Exit;
+  RefreshIncluders;
+  LSet := TDictionary<string, Boolean>.Create;
+  LSB := TStringBuilder.Create;
+  try
+    for LMid := 0 to FProject.ModelCount - 1 do
+      if PasFullPathKey(FProject.ModelFile(LMid), LKey) then
+        LSet.AddOrSetValue(LKey, True);
+    LIncludes := 0;
+    for LKey in FIncluders.Keys do
+      if not LSet.ContainsKey(LKey) then
+      begin
+        LSet.Add(LKey, True);
+        Inc(LIncludes);
+      end;
+    LKeys := LSet.Keys.ToArray;
+    TArray.Sort<string>(LKeys);
+    LSB.Append('[');
+    for LIdx := 0 to High(LKeys) do
+    begin
+      if LIdx > 0 then
+        LSB.Append(',');
+      LSB.Append(JsonQuote(LKeys[LIdx]));
+    end;
+    LSB.Append(']');
+    if LSB.ToString = FClosureSent then
+      Exit;
+    FClosureSent := LSB.ToString;
+    Notify('{"jsonrpc":"2.0","method":"pastree/closure","params":{"paths":' +
+      FClosureSent + '}}');
+    Log(Format('closure sent to the client: %d file(s), %d of them included',
+      [Length(LKeys), LIncludes]));
+  finally
+    LSB.Free;
+    LSet.Free;
   end;
 end;
 

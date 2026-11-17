@@ -55,6 +55,10 @@ var
   // The last publishDiagnostics params per lower-cased uri, as JSON text -
   // section 4d's evidence.
   GDiagnostics: TDictionary<string, string>;
+  // The last pastree/closure params as JSON text, and how many arrived -
+  // section 5c-bis's evidence.
+  GClosure: string;
+  GClosureCount: Integer;
 
 procedure Check(ACondition: Boolean; const AWhat: string);
 begin
@@ -394,6 +398,8 @@ begin
   // dcu32 holds the one fixture the server may see only compiled - see
   // TestDcuSource and build.bat, which puts DemoDcuLib.dcu there.
   LOptions.SearchPaths := [GFixtureDir, TPath.Combine(GFixtureDir, 'dcu32')];
+  // As the package asks: pastree/closure after an analysis (section 5c-bis).
+  LOptions.Closure := True;
   Result := GClient.Start(LOptions);
 end;
 
@@ -6029,6 +6035,75 @@ begin
   end;
 end;
 
+{ 5c-bis. pastree/closure (0.92.0): the files the analysis compiles, which the
+  package routes a file to the ACTIVE project by - a unit compiled through the
+  search path is in no .dproj's list. Pinned: the program and its units are
+  in it as full, lower-cased paths, a fixture nothing uses is not, and an
+  edit that changes no `uses` does not send it again. }
+procedure TestClosure;
+var
+  LUnitFile, LDiskText, LEdited, LBefore, LAfter: string;
+  LLine, LChar, LCount: Integer;
+  LRoot: TJSONValue;
+  LArr: TJSONArray;
+  LValue: TJSONValue;
+  LPaths: TDictionary<string, Boolean>;
+
+  function Has(const AName: string): Boolean;
+  begin
+    Result := LPaths.ContainsKey(
+      LowerCase(TPath.GetFullPath(TPath.Combine(GFixtureDir, AName))));
+  end;
+
+begin
+  Writeln;
+  Writeln('=== 5c-bis. pastree/closure: the files the analysis compiles ===');
+  LUnitFile := TPath.Combine(GFixtureDir, 'DemoUnit.pas');
+  FindPos(LUnitFile, 'function Greet', 'Greet', LLine, LChar);
+  Check(Ask('textDocument/definition', PositionParams(LUnitFile, LLine, LChar)),
+    'an analysis is in place');
+  Check(PumpUntil(function: Boolean begin Result := GClosureCount > 0 end,
+    5000), Format('pastree/closure arrived (%d time(s))', [GClosureCount]));
+
+  LPaths := TDictionary<string, Boolean>.Create;
+  LRoot := TJSONObject.ParseJSONValue(GClosure);
+  try
+    if (LRoot <> nil) and LRoot.TryGetValue<TJSONArray>('paths', LArr) then
+      for LValue in LArr do
+        LPaths.AddOrSetValue(LValue.Value, True);
+    Writeln(Format('  -- %d path(s)', [LPaths.Count]));
+    Check(Has('DemoApp.dpr'), 'the program is in it');
+    Check(Has('DemoUnit.pas') and Has('Demo.Dotted.pas'),
+      'and its units, as full lower-cased paths');
+    Check(not Has('DemoUseUnit.pas'), 'a fixture nothing uses is not');
+  finally
+    LRoot.Free;
+    LPaths.Free;
+  end;
+  Check(ReadServerLog.Contains('closure sent to the client: '),
+    'the server logged sending it');
+
+  // A comment in a body: an analysis runs, the file set stays.
+  LDiskText := TFile.ReadAllText(LUnitFile);
+  LEdited := StringReplace(LDiskText, 'Result := ''Hello, ''',
+    '// closure smoke'#13#10'  Result := ''Hello, ''', []);
+  Check(LEdited <> LDiskText, 'fixture patch applied (a comment in a body)');
+  LCount := GClosureCount;
+  LBefore := ReadServerLog;
+  SendDidChange(LUnitFile, LEdited);
+  Check(Ask('textDocument/definition', PositionParams(LUnitFile, LLine, LChar)),
+    'the edit was analyzed');
+  LAfter := Copy(ReadServerLog, Length(LBefore) + 1, MaxInt);
+  Check(LAfter.Contains('analysis done: '), 'an analysis ran for it');
+  PumpUntil(function: Boolean begin Result := False end, 300);
+  Check(GClosureCount = LCount,
+    Format('and the unchanged closure was not sent again (%d -> %d)',
+      [LCount, GClosureCount]));
+  SendDidChange(LUnitFile, LDiskText);
+  Check(Ask('textDocument/definition', PositionParams(LUnitFile, LLine, LChar)),
+    'the document went back to its on-disk text');
+end;
+
 procedure TestRestartOnConfigChange(const AExe: string);
 var
   LOldPid, LNewPid: DWORD;
@@ -6185,6 +6260,11 @@ begin
              Assigned(AParams) then
             GDiagnostics.AddOrSetValue(
               LowerCase(AParams.GetValue<string>('uri', '')), AParams.ToJSON);
+          if (AMethod = 'pastree/closure') and Assigned(AParams) then
+          begin
+            GClosure := AParams.ToJSON;
+            Inc(GClosureCount);
+          end;
         end;
       // The seam the real document layer uses: a restarted server starts with
       // no open documents, so they are re-sent on every handshake.
@@ -6205,6 +6285,7 @@ begin
       TestMissingDottedUnitRange;
       TestOverlayBeatsDisk;
       TestIncrementalPath;
+      TestClosure;
       TestCompletion;
       TestCompletionGenericDetail;
       TestCompletionExpected;
