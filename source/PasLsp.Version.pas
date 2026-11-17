@@ -549,7 +549,10 @@ const
   /// default, TPasUnusedLibrary.PackagesInternal for `exported: false`) -
   /// an older library lists them as rows with a doubt, and has no
   /// PackagesInternal (a compile error).
-  cMinPasTreeVersion = '0.207.0';
+  /// 0.208.0 (2026-11-17): PasTree.Sema.ImportGraph and
+  /// TPasWorkspace.ImportGraph - pastree/importGraph; an older library has
+  /// neither (a compile error).
+  cMinPasTreeVersion = '0.208.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

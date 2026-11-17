@@ -638,6 +638,42 @@ type
   TLspUnusedProc = reference to procedure(ASuccess: Boolean;
     const AAnswer: TLspUnusedAnswer; const AError: string);
 
+  /// <summary>A unit of pastree/importGraph's answer.</summary>
+  TLspImportUnit = record
+    Name: string;
+    FilePath: string;
+    IsRoot: Boolean;
+    IsLibrary: Boolean;
+    Level: Integer;        // fewest steps from the root; -1 off the paths
+    Bottleneck: Boolean;   // every path goes through it
+  end;
+
+  /// <summary>An importer edge: FromUnit lists ToUnit (indexes of Units).
+  /// Row/Col/Len: the entry's name, 1-based; FilePath '' when the server
+  /// could not place it.</summary>
+  TLspImportEdge = record
+    FromUnit, ToUnit: Integer;
+    InImpl: Boolean;
+    Sole: Boolean;         // every path takes it
+    FilePath: string;
+    Row, Col, Len: Integer;
+  end;
+
+  /// <summary>pastree/importGraph: the paths from Root to Target as a
+  /// subgraph - Edges grouped by ToUnit, each group nearest the root first;
+  /// Chain the shortest path's edges, root first. Root -1: no root of the
+  /// analysis reaches Target.</summary>
+  TLspImportGraph = record
+    Target, Root: Integer;
+    Roots: TArray<Integer>;
+    Units: TArray<TLspImportUnit>;
+    Edges: TArray<TLspImportEdge>;
+    Chain: TArray<Integer>;
+  end;
+
+  TLspImportGraphProc = reference to procedure(ASuccess: Boolean;
+    const AGraph: TLspImportGraph; const AError: string);
+
   /// <summary>The `uses` entries to take out of one file, by name.</summary>
   TLspRemovalFile = record
     FilePath: string;
@@ -1176,6 +1212,13 @@ procedure LspUnusedUses(const AScope, AFileName: string;
 /// <summary>pastree/unreferencedUnits over AFileName's project.</summary>
 procedure LspUnreferencedUnits(const AFileName: string;
   const AOnDone: TLspUnusedProc);
+
+/// <summary>pastree/importGraph: how the program takes in the unit at
+/// ARow/ACol of AFileName (a `uses` entry or the unit header), else
+/// AFileName's unit. ARoot: the program to start from ('' for the
+/// project's). Asked of the owner, after a document sync.</summary>
+procedure LspImportGraph(const AFileName: string; ARow, ACol: Integer;
+  const ARoot: string; const AOnDone: TLspImportGraphProc);
 
 /// <summary>pastree/unusedSymbols: AScope 'unit' (AFileName's own
 /// declarations) or 'project' - used is judged over the whole project
@@ -1835,6 +1878,9 @@ type
     /// <summary>pastree/unusedUses or pastree/unreferencedUnits.</summary>
     procedure UnusedUnits(const AMethod, AScope, AFileName: string;
       const AOnDone: TLspUnusedProc; AAfterRows: Boolean = False);
+    /// <summary>pastree/importGraph.</summary>
+    procedure ImportGraph(const AFileName: string; ARow, ACol: Integer;
+      const ARoot: string; const AOnDone: TLspImportGraphProc);
     /// <summary>pastree/usesRemoval.</summary>
     procedure UsesRemoval(const AFiles: TArray<TLspRemovalFile>;
       const AOnDone: TLspUsesRemovalProc);
@@ -5563,6 +5609,105 @@ begin
     end);
 end;
 
+function ParseImportGraph(AResult: TJSONValue): TLspImportGraph;
+var
+  LArr: TJSONArray;
+  LObj, LLoc: TJSONObject;
+  LUnit: TLspImportUnit;
+  LEdge: TLspImportEdge;
+begin
+  Result := Default(TLspImportGraph);
+  Result.Root := -1;
+  if not (AResult is TJSONObject) then
+    Exit;
+  Result.Target := AResult.GetValue<Integer>('target', 0);
+  Result.Root := AResult.GetValue<Integer>('root', -1);
+  Result.Roots := ReadIntArray(TJSONObject(AResult), 'roots');
+  Result.Chain := ReadIntArray(TJSONObject(AResult), 'chain');
+  if AResult.TryGetValue<TJSONArray>('units', LArr) then
+  begin
+    SetLength(Result.Units, LArr.Count);
+    for var LI := 0 to LArr.Count - 1 do
+    begin
+      LUnit := Default(TLspImportUnit);
+      LUnit.Level := -1;
+      if LArr.Items[LI] is TJSONObject then
+      begin
+        LObj := TJSONObject(LArr.Items[LI]);
+        LUnit.Name := LObj.GetValue<string>('name', '');
+        LUnit.FilePath := LspUriToPath(LObj.GetValue<string>('uri', ''));
+        LUnit.IsRoot := LObj.GetValue<Boolean>('isRoot', False);
+        LUnit.IsLibrary := LObj.GetValue<Boolean>('library', False);
+        LUnit.Level := LObj.GetValue<Integer>('level', -1);
+        LUnit.Bottleneck := LObj.GetValue<Boolean>('bottleneck', False);
+      end;
+      Result.Units[LI] := LUnit;
+    end;
+  end;
+  if AResult.TryGetValue<TJSONArray>('edges', LArr) then
+  begin
+    SetLength(Result.Edges, LArr.Count);
+    for var LI := 0 to LArr.Count - 1 do
+    begin
+      LEdge := Default(TLspImportEdge);
+      if LArr.Items[LI] is TJSONObject then
+      begin
+        LObj := TJSONObject(LArr.Items[LI]);
+        LEdge.FromUnit := LObj.GetValue<Integer>('from', 0);
+        LEdge.ToUnit := LObj.GetValue<Integer>('to', 0);
+        LEdge.InImpl := LObj.GetValue<Boolean>('impl', False);
+        LEdge.Sole := LObj.GetValue<Boolean>('sole', False);
+        if LObj.TryGetValue<TJSONObject>('location', LLoc) and
+           not ReadUnusedLocation(LLoc, LEdge.FilePath, LEdge.Row, LEdge.Col,
+             LEdge.Len) then
+          LEdge.FilePath := '';
+      end;
+      Result.Edges[LI] := LEdge;
+    end;
+  end;
+end;
+
+procedure TLspSession.ImportGraph(const AFileName: string; ARow,
+  ACol: Integer; const ARoot: string; const AOnDone: TLspImportGraphProc);
+var
+  LParams, LDoc, LPos: TJSONObject;
+  LLine, LChar: Integer;
+begin
+  if not EnsureSession then
+  begin
+    AOnDone(False, Default(TLspImportGraph), 'no LSP server available');
+    Exit;
+  end;
+  // The caret is a position in the text the server holds: the buffers as
+  // they are now.
+  FDocs.Sync;
+  LParams := TJSONObject.Create;
+  LDoc := TJSONObject.Create;
+  LDoc.AddPair('uri', PathToLspUri(AFileName));
+  LParams.AddPair('textDocument', LDoc);
+  if ARow > 0 then
+  begin
+    IdeToLsp(ARow, ACol, LLine, LChar);
+    LPos := TJSONObject.Create;
+    LPos.AddPair('line', TJSONNumber.Create(LLine));
+    LPos.AddPair('character', TJSONNumber.Create(LChar));
+    LParams.AddPair('position', LPos);
+  end;
+  if ARoot <> '' then
+    LParams.AddPair('root', ARoot);
+  FClient.Request('pastree/importGraph', LParams,
+    procedure(ASuccess: Boolean; AResult: TJSONValue; const AError: string)
+    begin
+      if not ASuccess then
+        AOnDone(False, Default(TLspImportGraph), AError)
+      else if not (AResult is TJSONObject) then
+        AOnDone(False, Default(TLspImportGraph),
+          'the unit is not part of the analysis')
+      else
+        AOnDone(True, ParseImportGraph(AResult), '');
+    end);
+end;
+
 function ParseUsesRemovalAnswer(AResult: TJSONValue): TLspUsesRemovalAnswer;
 var
   LArr: TJSONArray;
@@ -7556,6 +7701,20 @@ begin
     Exit;
   end;
   LSession.UnusedUnits('pastree/unusedSymbols', AScope, AFileName, AOnDone);
+end;
+
+procedure LspImportGraph(const AFileName: string; ARow, ACol: Integer;
+  const ARoot: string; const AOnDone: TLspImportGraphProc);
+var
+  LSession: TLspSession;
+begin
+  LSession := SessionForRequest(AFileName);
+  if LSession = nil then
+  begin
+    AOnDone(False, Default(TLspImportGraph), 'LSP session not initialized');
+    Exit;
+  end;
+  LSession.ImportGraph(AFileName, ARow, ACol, ARoot, AOnDone);
 end;
 
 procedure LspUsesRemoval(const AFileName: string;

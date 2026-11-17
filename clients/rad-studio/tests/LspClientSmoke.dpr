@@ -5519,6 +5519,31 @@ begin
     Check(GOk and not GResultJson.Contains('"unitName":"UGlob"') and
       not GResultJson.Contains('"unitName":"UHelper"'),
       'UGlob is kept for its initialization, and UHelper with it');
+
+    // pastree/importGraph (0.90.0): UGlob comes in only through UA - UA a
+    // bottleneck, both entries sole, the chain UMain -> UA -> UGlob. UHelper
+    // through UA, UMulti and UGlob's implementation: nothing forced.
+    LParams := TJSONObject.Create;
+    LDoc := TJSONObject.Create;
+    LDoc.AddPair('uri', PathToLspUri(TPath.Combine(LDir, 'UGlob.pas')));
+    LParams.AddPair('textDocument', LDoc);
+    Check(Ask('pastree/importGraph', LParams), 'importGraph (UGlob) answered');
+    Check(GOk and GResultJson.Contains('"name":"UGlob"') and
+      GResultJson.Contains('"level":1,"bottleneck":true') and
+      GResultJson.Contains('"from":1,"to":0,"impl":false,"sole":true') and
+      GResultJson.Contains('"chain":[1,0]'),
+      'UGlob: through UA alone, UA a bottleneck, both entries sole');
+    LParams := TJSONObject.Create;
+    LDoc := TJSONObject.Create;
+    LDoc.AddPair('uri', PathToLspUri(TPath.Combine(LDir, 'UHelper.pas')));
+    LParams.AddPair('textDocument', LDoc);
+    Check(Ask('pastree/importGraph', LParams),
+      'importGraph (UHelper) answered');
+    Check(GOk and GResultJson.Contains('"name":"UMulti"') and
+      GResultJson.Contains('"impl":true') and
+      not GResultJson.Contains('"bottleneck":true') and
+      not GResultJson.Contains('"sole":true'),
+      'UHelper: three importers, one an implementation entry, none forced');
   finally
     GClient := LSaved;
     LOwn.Free;

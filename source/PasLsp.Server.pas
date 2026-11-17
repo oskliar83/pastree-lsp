@@ -99,6 +99,7 @@ uses
   PasLsp.UseUnit,
   PasTree.UsesEdit,
   PasTree.Sema.Lint,
+  PasTree.Sema.ImportGraph,
   PasTree.Sema.Workspace,
   PasLsp.BlockClose,
   PasLsp.SourceText,
@@ -644,6 +645,7 @@ type
     function HandleUseUnit(const AMsg: TLspIncoming): string;
     function HandleUnusedUses(const AMsg: TLspIncoming): string;
     function HandleUnreferencedUnits(const AMsg: TLspIncoming): string;
+    function HandleImportGraph(const AMsg: TLspIncoming): string;
     function HandleUnusedSymbols(const AMsg: TLspIncoming): string;
     function ProjectUnitMids: TArray<Integer>;
     { The files of AMids, for a workspace query - a file survives the
@@ -8791,6 +8793,210 @@ begin
   end;
 end;
 
+{ pastree/importGraph - OURS (0.90.0, PasTree 0.208.0's ImportGraph). How
+  the program takes a unit in: the unit at `position` when it is a `uses`
+  entry or the unit header (TPasNavigator.UnitAt), else the document's unit.
+  `root` (optional, a file or a unit name) picks the program the paths start
+  from; by default the project's main source, else the first root reaching
+  the unit.
+
+  The answer is the whole subgraph of the paths, small next to the closure,
+  so the client grows its tree from it without asking again:
+  - `units`: the units on a path, then any other root reaching the unit -
+    `name`, `uri`, `isRoot`, `library` (read light), `level` (fewest steps
+    from the root, -1 off the paths) and `bottleneck` (every path goes
+    through it);
+  - `edges`: every importer edge between them - `from` / `to` (indexes of
+    `units`), `impl` (a unit's implementation `uses`), `sole` (every path
+    takes it: removing this one entry drops the unit) and `location` (the
+    entry's name; null when it cannot be placed). Grouped by `to`, each
+    group in TPasImportPaths.Importers' order: nearest the root first, so
+    the first importer up is the shortest chain;
+  - `target`, `root`, `roots` (indexes), `chain` (edge indexes, root first).
+  A unit no root reaches answers with `root` -1 and no edges.
+
+  The entries' positions rehydrate the demoted library units that list
+  them; the text is demoted again after the answer. }
+function TLspServer.HandleImportGraph(const AMsg: TLspIncoming): string;
+var
+  LPath, LTargetFile, LRootArg, LName, LFile, LLoc: string;
+  LMid, LTMid, LLine, LChar, LPasLine, LPasCol, LTarget, LRoot: Integer;
+  LNotSearched, LSiteLine, LSiteCol, LHydrated, LAt, LFromMid: Integer;
+  LGraph: TPasImportGraph;
+  LPaths: TPasImportPaths;
+  LRoots: TArray<Integer>;
+  LIndex, LEdgeIdx: TDictionary<Integer, Integer>;
+  LUnits, LEdges: TList<Integer>;
+  LSB: TStringBuilder;
+  LStart: UInt64;
+  LEdge: TPasImportEdge;
+  LUnit: TPasImportUnit;
+  LFound: Boolean;
+begin
+  LPath := DocPathOf(AMsg.Params);
+  if LPath = '' then
+    Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
+      'importGraph: textDocument.uri required'));
+  LRootArg := '';
+  if AMsg.Params <> nil then
+    LRootArg := AMsg.Params.GetValue<string>('root', '');
+  if not WaitAnalyzed(LPath, AMsg.IdJson) then
+    Exit(BuildError(AMsg.IdJson, LSP_REQUEST_CANCELLED, 'request cancelled'));
+  if FNav = nil then
+    Exit(BuildResponse(AMsg.IdJson, 'null'));
+  LMid := FNav.ModelIdOf(LPath);
+  if LMid < 0 then
+    Exit(BuildError(AMsg.IdJson, LSP_REQUEST_FAILED,
+      TPath.GetFileName(LPath) + ' is not part of the analysis'));
+  LStart := GetTickCount64;
+  // The unit asked about, by file: the query below may rebuild the project.
+  LTargetFile := LPath;
+  if AMsg.Params.TryGetValue<Integer>('position.line', LLine) and
+     AMsg.Params.TryGetValue<Integer>('position.character', LChar) then
+  begin
+    LspToPasTree(LLine, LChar, LPasLine, LPasCol);
+    if FNav.UnitAt(LMid, LPasLine, LPasCol, LTMid, LName) and (LTMid >= 0) then
+      LTargetFile := FProject.ModelFile(LTMid);
+  end;
+  // Through the workspace: in light mode the closure's units nobody loaded
+  // are loaded first, so the graph is the full analysis's.
+  LGraph := FWS.ImportGraph;
+  LNotSearched := WsDone('pastree/importGraph');
+  LPaths := nil;
+  LIndex := TDictionary<Integer, Integer>.Create;
+  LEdgeIdx := TDictionary<Integer, Integer>.Create;
+  LUnits := TList<Integer>.Create;
+  LEdges := TList<Integer>.Create;
+  LSB := TStringBuilder.Create;
+  try
+    LTarget := LGraph.UnitOf(LTargetFile);
+    if LTarget < 0 then
+      Exit(BuildError(AMsg.IdJson, LSP_REQUEST_FAILED,
+        TPath.GetFileName(LTargetFile) + ' is not in the uses graph'));
+    LRoots := LGraph.RootsReaching(LTarget);
+    LRoot := -1;
+    if LRootArg <> '' then
+      LRoot := LGraph.UnitOf(LRootArg);
+    if (LRoot < 0) and (FMainSource <> '') then
+      LRoot := LGraph.UnitOf(FMainSource);
+    LFound := False;
+    for var LR in LRoots do
+      if LR = LRoot then
+        LFound := True;
+    if not LFound then
+      if LRoots <> nil then
+        LRoot := LRoots[0]
+      else
+        LRoot := -1;
+    LIndex.Add(LTarget, 0);
+    LUnits.Add(LTarget);
+    if LRoot >= 0 then
+    begin
+      LPaths := TPasImportPaths.Create(LGraph, LRoot, LTarget);
+      // From the target, importer by importer breadth-first: each unit's
+      // importers in their order, every unit once.
+      LAt := 0;
+      while LAt < LUnits.Count do
+      begin
+        for var LE in LPaths.Importers(LUnits[LAt]) do
+        begin
+          LEdgeIdx.Add(LE, LEdges.Count);
+          LEdges.Add(LE);
+          if not LIndex.ContainsKey(LGraph.Edges[LE].FromUnit) then
+          begin
+            LIndex.Add(LGraph.Edges[LE].FromUnit, LUnits.Count);
+            LUnits.Add(LGraph.Edges[LE].FromUnit);
+          end;
+        end;
+        Inc(LAt);
+      end;
+    end;
+    for var LR in LRoots do
+      if not LIndex.ContainsKey(LR) then
+      begin
+        LIndex.Add(LR, LUnits.Count);
+        LUnits.Add(LR);
+      end;
+
+    LSB.Append('{"target":0,"root":');
+    if LRoot >= 0 then
+      LSB.Append(LIndex[LRoot])
+    else
+      LSB.Append(-1);
+    LSB.Append(',"roots":[');
+    for var LI := 0 to High(LRoots) do
+    begin
+      if LI > 0 then
+        LSB.Append(',');
+      LSB.Append(LIndex[LRoots[LI]]);
+    end;
+    LSB.Append('],"units":[');
+    for var LI := 0 to LUnits.Count - 1 do
+    begin
+      LUnit := LGraph.Units[LUnits[LI]];
+      // Not IfThen: its arguments are evaluated whether LPaths is nil or not.
+      LAt := -1;
+      if (LPaths <> nil) and LPaths.OnPath(LUnits[LI]) then
+        LAt := LPaths.Depth(LUnits[LI]);
+      if LI > 0 then
+        LSB.Append(',');
+      LSB.Append(Format('{"name":%s,"uri":%s,"isRoot":%s,"library":%s,' +
+        '"level":%d,"bottleneck":%s}', [JsonQuote(LUnit.Name),
+        JsonQuote(PathToUri(LUnit.FilePath)), JsonBool(LUnit.IsRoot),
+        JsonBool(LUnit.Light), LAt,
+        JsonBool((LPaths <> nil) and LPaths.IsBottleneck(LUnits[LI]))]));
+    end;
+    // A position rehydrates a demoted importer (~1 ms a unit); counted, so
+    // the library text goes back out once the answer is written.
+    LHydrated := 0;
+    LSB.Append('],"edges":[');
+    for var LI := 0 to LEdges.Count - 1 do
+    begin
+      LEdge := LGraph.Edges[LEdges[LI]];
+      LFromMid := FProject.ModelIdOf(LGraph.Units[LEdge.FromUnit].FilePath);
+      if (LFromMid >= 0) and FProject.Model(LFromMid).Demoted then
+        Inc(LHydrated);
+      if LGraph.EdgeSite(FProject, LEdges[LI], LFile, LSiteLine, LSiteCol) then
+        LLoc := LocationJson(LFile, LSiteLine, LSiteCol, Length(LEdge.Written))
+      else
+        LLoc := 'null';
+      if LI > 0 then
+        LSB.Append(',');
+      LSB.Append(Format('{"from":%d,"to":%d,"impl":%s,"sole":%s,' +
+        '"location":%s}', [LIndex[LEdge.FromUnit], LIndex[LEdge.ToUnit],
+        JsonBool(LEdge.InImpl), JsonBool(LPaths.IsSole(LEdges[LI])), LLoc]));
+    end;
+    LSB.Append('],"chain":[');
+    if LPaths <> nil then
+      for var LI := 0 to High(LPaths.ShortestChain) do
+      begin
+        if LI > 0 then
+          LSB.Append(',');
+        LSB.Append(LEdgeIdx[LPaths.ShortestChain[LI]]);
+      end;
+    LSB.Append(']' + NotSearchedMember(LNotSearched) + '}');
+    if LHydrated > 0 then
+      DemoteLibraryText;
+    if LRoot >= 0 then
+      LName := LGraph.Units[LRoot].Name
+    else
+      LName := '(no root)';
+    Log(Format('importGraph %s from %s: %d unit(s), %d edge(s) on its ' +
+      'paths, %d importer(s) rehydrated, in %d ms',
+      [LGraph.Units[LTarget].Name, LName, LUnits.Count, LEdges.Count,
+      LHydrated, GetTickCount64 - LStart]));
+    Result := BuildResponse(AMsg.IdJson, LSB.ToString);
+  finally
+    LSB.Free;
+    LEdges.Free;
+    LUnits.Free;
+    LEdgeIdx.Free;
+    LIndex.Free;
+    LPaths.Free;
+    LGraph.Free;
+  end;
+end;
+
 { pastree/unreferencedUnits - OURS. The project units nobody uses
   (PasTree.Sema.Lint.FindUnreferencedUnits, with loHideGlobalInit as
   pastree/unusedUses): a row is the unit's name in its own header, with
@@ -10784,6 +10990,8 @@ begin
         Exit(HandleUnusedUses(LMsg));
       if LMsg.Method = 'pastree/unreferencedUnits' then
         Exit(HandleUnreferencedUnits(LMsg));
+      if LMsg.Method = 'pastree/importGraph' then
+        Exit(HandleImportGraph(LMsg));
       if LMsg.Method = 'pastree/unusedSymbols' then
         Exit(HandleUnusedSymbols(LMsg));
       if LMsg.Method = 'pastree/usesRemoval' then

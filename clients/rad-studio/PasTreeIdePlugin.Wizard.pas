@@ -72,6 +72,7 @@ uses
   PasTreeIdePlugin.FindReferences, PasTreeIdePlugin.FindHierarchy,
   PasTreeIdePlugin.FindDefines,
   PasTreeIdePlugin.UnusedUnits,
+  PasTreeIdePlugin.ImportGraph,
   PasTreeIdePlugin.GotoDeclaration,
   PasTreeIdePlugin.DcuSource,
   PasTreeIdePlugin.CodeInsight, PasTreeIdePlugin.IdeInsight,
@@ -132,7 +133,11 @@ type
     // entries and units nobody uses - its dialog asks which and where
     // (PasTreeIdePlugin.UnusedForm, .UnusedUnits); never greyed. It was
     // three items, one per question, until Alex merged them (2026-11-14).
-    faiUnused);
+    faiUnused,
+    // Import Graph (0.90.0): through which units the program takes the
+    // unit at the caret in (PasTreeIdePlugin.ImportGraph); never greyed -
+    // any position names a unit, the file's own when nothing else.
+    faiImportGraph);
 
   TMenuManager = class
   private
@@ -335,14 +340,14 @@ const
     ('References', 'Overrides', 'Implementations', 'Descendants',
      'Assignments', 'Creations', 'Destructions',
      'Defines', 'DefinesAtCursor', 'OptionsAtCursor',
-     'Unused');
+     'Unused', 'ImportGraph');
   // What the menu actually shows - "Defines at cursor" reads as PasTree's
   // own demo has it, a space its Name/Category may not carry.
   cItemCaption: array[TFindAllItem] of string =
     ('References', 'Overrides', 'Implementations', 'Descendants',
      'Assignments', 'Creations', 'Destructions',
      'Defines', 'Defines at cursor', 'Options at cursor',
-     'Unused...');
+     'Unused...', 'Import Graph');
 var
   LAction: TAction;
   LItem: TFindAllItem;
@@ -637,7 +642,7 @@ begin
     // for them and they are always offered, exactly as PasTree's own demo
     // greys nothing on these two.
     faiDefines, faiDefinesAtCursor, faiOptionsAtCursor: Result := True;
-    faiUnused: Result := True;
+    faiUnused, faiImportGraph: Result := True;
   else
     Result := True;
   end;
@@ -725,6 +730,7 @@ begin
       faiDefinesAtCursor: ExecuteDefinesAtCursor(FEditorServices.TopView);
       faiOptionsAtCursor: ExecuteOptionsAtCursor(FEditorServices.TopView);
       faiUnused:          ExecuteUnused(FEditorServices.TopView);
+      faiImportGraph:     ExecuteImportGraph(FEditorServices.TopView);
     end;
   except
     on E: Exception do
@@ -896,6 +902,7 @@ begin
     CloseFindHierarchyResults;
     CloseFindDefinesResults;
     CloseUnusedUnitsResults;
+    CloseImportGraphResults;
   end;
 end;
 
@@ -1109,6 +1116,7 @@ begin
   FinalizeFindHierarchyMessageGroups;
   FinalizeFindDefinesMessageGroup;
   FinalizeUnusedUnits;
+  FinalizeImportGraph;
   // Last of the teardowns and the least forgiving one: this stops the server
   // and joins the transport's reader thread. A reader thread still running
   // inside this package's code when the BPL unloads is an immediate crash, so

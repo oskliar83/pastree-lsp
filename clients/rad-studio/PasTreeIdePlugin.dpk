@@ -81,6 +81,9 @@ contains
     with the Remove / Revert toolbar for units. See UnusedUnits' header. }
   PasTreeIdePlugin.UnusedUnits in 'PasTreeIdePlugin.UnusedUnits.pas',
   PasTreeIdePlugin.UnusedForm in 'PasTreeIdePlugin.UnusedForm.pas' {PasTreeUnusedForm},
+  { Find All > Import Graph: through which units the program takes a unit
+    in (pastree/importGraph). See its header. }
+  PasTreeIdePlugin.ImportGraph in 'PasTreeIdePlugin.ImportGraph.pas',
   PasTreeIdePlugin.ResultRows in 'PasTreeIdePlugin.ResultRows.pas',
   PasTreeIdePlugin.FormModules in 'PasTreeIdePlugin.FormModules.pas',
   PasTreeIdePlugin.WaitDialog in 'PasTreeIdePlugin.WaitDialog.pas',

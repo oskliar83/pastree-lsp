@@ -112,6 +112,7 @@
         <DCCReference Include="PasTreeIdePlugin.FindHierarchy.pas"/>
         <DCCReference Include="PasTreeIdePlugin.FindDefines.pas"/>
         <DCCReference Include="PasTreeIdePlugin.UnusedUnits.pas"/>
+        <DCCReference Include="PasTreeIdePlugin.ImportGraph.pas"/>
         <DCCReference Include="PasTreeIdePlugin.UnusedForm.pas">
             <Form>PasTreeUnusedForm</Form>
         </DCCReference>
