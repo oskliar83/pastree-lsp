@@ -111,9 +111,15 @@ begin
   Result := ADcuPath + '.pas';
 end;
 
+// A real source whose unit name ends in `.Dcu` - PasTree.Dcu.pas, the .dcu
+// reader in PasTree itself - is spelled like a generated tab. It is one
+// only when no such file is on disk: the tab's name is virtual, served by
+// the plugin's file system, and nothing ever writes it. Before 0.93.1
+// every request about PasTree.Dcu.pas named `PasTree.Dcu` to the server,
+// which could not read it (Remove refused its rows: "could not be read").
 function DcuPathOfVirtual(const AName: string): string;
 begin
-  if AName.EndsWith(cVirtualSuffix, True) then
+  if AName.EndsWith(cVirtualSuffix, True) and not FileExists(AName) then
     Result := Copy(AName, 1, Length(AName) - Length('.pas'))
   else
     Result := '';

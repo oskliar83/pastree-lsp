@@ -28,7 +28,8 @@ uses
   PasTreeIdePlugin.OutlineRows,  // the Go To table's reader, checked in 5d-ter
   PasTreeIdePlugin.NavSymbols,    // the navigation toolbar's tree, ditto
   PasTreeIdePlugin.FormatText,    // Format's options and edits, 5i
-  PasTreeIdePlugin.UnusedRows;    // the Unused rows and the group merge, 5x-bis
+  PasTreeIdePlugin.UnusedRows,    // the Unused rows and the group merge, 5x-bis
+  PasTreeIdePlugin.DcuNames;      // the generated-tab naming rule, TestDcuNames
 
 const
   { The server this repo's own build.bat produces, as a path RELATIVE to the
@@ -411,6 +412,34 @@ end;
   left server copies there, one level above today's out\<version>\<platform>\
   - a search that walked up would take that one before the fresh
   out\pastree-server.exe, and every fix would "not work". }
+{ A generated .dcu tab is named Foo.dcu.pas and maps back to Foo.dcu; a
+  real source whose unit name ends in `.Dcu` (PasTree.Dcu.pas) is spelled
+  the same and must stay itself - before 0.93.1 every request about it
+  named `PasTree.Dcu` to the server. }
+procedure TestDcuNames;
+var
+  LDir, LReal, LVirtual: string;
+begin
+  Writeln;
+  Writeln('=== DcuNames: a real X.Dcu.pas is not a generated tab ===');
+  LDir := TPath.Combine(TPath.GetTempPath, 'pastree-dcunames-' +
+    IntToStr(GetCurrentProcessId));
+  TDirectory.CreateDirectory(LDir);
+  try
+    LReal := TPath.Combine(LDir, 'PasTree.Dcu.pas');
+    TFile.WriteAllText(LReal, 'unit PasTree.Dcu; interface implementation end.');
+    LVirtual := TPath.Combine(LDir, 'Foo.dcu.pas');
+    Check(LspPathOf(LReal) = LReal,
+      'a real PasTree.Dcu.pas keeps its name (got ' + LspPathOf(LReal) + ')');
+    Check(DcuPathOfVirtual(LReal) = '',
+      'and is not taken for a generated tab');
+    Check(SameText(LspPathOf(LVirtual), TPath.Combine(LDir, 'Foo.dcu')),
+      'a generated Foo.dcu.pas tab still maps to Foo.dcu');
+  finally
+    TDirectory.Delete(LDir, True);
+  end;
+end;
+
 procedure TestFindServerExe;
 var
   LRoot, LOut, LBplDir, LFresh, LStale, LBeside, LFound, LSavedEnv: string;
@@ -6536,6 +6565,7 @@ begin
       GClient.OnReady := ReopenAll;
 
       TestFindServerExe;
+      TestDcuNames;
       TestQueuedBeforeReady(GExe);
       TestNavigation;
       TestDefines;
