@@ -134,9 +134,10 @@ type
     // (PasTreeIdePlugin.UnusedForm, .UnusedUnits); never greyed. It was
     // three items, one per question, until Alex merged them (2026-11-14).
     faiUnused,
-    // Import Graph (0.90.0): through which units the program takes the
-    // unit at the caret in (PasTreeIdePlugin.ImportGraph); never greyed -
-    // any position names a unit, the file's own when nothing else.
+    // Unit Import Graph (0.90.0; "Import Graph" until 0.92.2, which Alex
+    // found unclear): through which units the program takes the unit at
+    // the caret in (PasTreeIdePlugin.ImportGraph); never greyed - any
+    // position names a unit, the file's own when nothing else.
     faiImportGraph);
 
   TMenuManager = class
@@ -347,7 +348,7 @@ const
     ('References', 'Overrides', 'Implementations', 'Descendants',
      'Assignments', 'Creations', 'Destructions',
      'Defines', 'Defines at cursor', 'Options at cursor',
-     'Unused...', 'Import Graph');
+     'Unused...', 'Unit Import Graph');
 var
   LAction: TAction;
   LItem: TFindAllItem;

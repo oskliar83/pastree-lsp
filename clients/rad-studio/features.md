@@ -130,19 +130,21 @@ declared as exactly that class. Both are about the static type, so an instance
 created through a descendant, or freed through an ancestor-typed variable or by
 an owner, is not a row.
 
-#### Import Graph
+#### Unit Import Graph
 
 Through which units the program takes a unit in - the unit under the caret
 when it is on a `uses` entry or the unit header, else the unit in the editor.
-The "Import Graph" tab opens with the shortest chain from the program and the
-number of units on its paths; under it, the units every path goes through and
-the `uses` entries whose removal alone drops the unit (double-click opens the
-entry). Then the unit, and under every unit the units listing it, up to the
-program - nearest the program first, so the first branch is the shortest
-chain. Each row is the importer's entry, interface or implementation, with its
-level (steps from the program); a unit already shown higher up says "(see
-above)", one on its own chain "(cycle)". An entry every path takes has the
-unit's name marked.
+The program is the active project's when it compiles the unit, else that of
+the project the unit belongs to. The "Unit Import Graph" tab opens with the
+shortest chain from the program and the number of units on its paths, and
+names any other program that reaches the unit. Then the unit, and under every
+unit the units listing it, up to the program - the title's chain first, then
+nearest the program first. Each row is the importer's entry, interface or
+implementation, with its level (steps from the program); double-click opens
+it. A unit already shown higher up says "(see above)", one on its own chain
+"(cycle)". An entry every path takes - removing it alone drops the unit - has
+the unit's name marked. The tree is never cut: every edge of the paths is a
+row.
 
 ### Go To (Ctrl+G)
 

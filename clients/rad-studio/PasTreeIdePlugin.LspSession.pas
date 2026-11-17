@@ -6351,7 +6351,7 @@ end;
   through its search path while another project of the group lists it (a
   data module shared by a client and its server) was answered by the OTHER
   project - its platform (a pointer's size in the hint), its defines (the
-  inactive-code grey), its program as the import graph's root - and asking
+  inactive-code grey), its program as the Unit Import Graph's root - and asking
   about it started that project's whole server. }
 function TLspSessionPool.OwningProjectFile(const APath: string): string;
 var

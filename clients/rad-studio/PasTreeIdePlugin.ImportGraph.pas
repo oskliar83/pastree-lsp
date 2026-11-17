@@ -1,9 +1,11 @@
 unit PasTreeIdePlugin.ImportGraph;
 
 {
-  Find All > Import Graph (0.90.0): through which units the program takes a
-  unit in - the unit at the caret when it is a `uses` entry or the unit
-  header, else the unit in the editor. PasTree 0.208.0's
+  Find All > Unit Import Graph (0.90.0; "Import Graph" until 0.92.2, which
+  Alex found unclear - everything the user reads says "Unit Import Graph",
+  the method and the identifiers kept their names): through which units the
+  program takes a unit in - the unit at the caret when it is a `uses` entry
+  or the unit header, else the unit in the editor. PasTree 0.208.0's
   PasTree.Sema.ImportGraph, asked as pastree/importGraph; PasTree's demo
   shows the same answer as a tree of its own (docs/editor-features.md
   sec. 16 there).
@@ -11,7 +13,7 @@ unit PasTreeIdePlugin.ImportGraph;
   THE SERVER ANSWERS WITH THE WHOLE SUBGRAPH OF THE PATHS - every unit on a
   path from the program to the unit and every `uses` edge between them,
   each unit's importers nearest the program first - and the tree is grown
-  here, in one tab, "Import Graph":
+  here, in one tab, "Unit Import Graph":
 
     - a title row: the steps and the shortest chain, the units on its paths;
     - a note under it naming the other programs that reach the unit, when
@@ -51,7 +53,7 @@ interface
 uses
   ToolsAPI;
 
-/// <summary>Entry point of the Find All > Import Graph item.</summary>
+/// <summary>Entry point of the Find All > Unit Import Graph item.</summary>
 procedure ExecuteImportGraph(const AView: IOTAEditView);
 
 /// <summary>Removes the tab and closes the callback gate - once, from
@@ -73,7 +75,7 @@ uses
   PasTreeIdePlugin.RenameToolbar;
 
 const
-  cTabName = 'Import Graph';
+  cTabName = 'Unit Import Graph';
 
 var
   GGroup: IOTAMessageGroup;
@@ -231,7 +233,7 @@ begin
   LMessageServices.ClearMessageGroup(LGroup);
   LTarget := AGraph.Units[AGraph.Target];
 
-  LHead := Format('PasTree Import Graph: "%s" - ', [LTarget.Name]);
+  LHead := Format('PasTree Unit Import Graph: "%s" - ', [LTarget.Name]);
   if AGraph.Root < 0 then
   begin
     LMessageServices.AddCustomMessagePtr(NewTitleRow(LHead +
@@ -309,13 +311,13 @@ begin
       Exit;
     if GRunning then
     begin
-      IdeMessageDlg('The import graph is still being built.', mtInformation,
+      IdeMessageDlg('The unit import graph is still being built.', mtInformation,
         [mbOK]);
       Exit;
     end;
     LFile := AView.Buffer.FileName;
     GRunning := True;
-    ShowWaitDialog('Building the import graph...');
+    ShowWaitDialog('Building the unit import graph...');
     LspImportGraph(LFile, AView.Buffer.EditPosition.Row,
       AView.Buffer.EditPosition.Column, '',
       procedure(ASuccess: Boolean; const AGraph: TLspImportGraph;
@@ -327,7 +329,7 @@ begin
         if not ASuccess then
         begin
           CloseWaitDialog;
-          LogDiagnostic('Import Graph: ' + AError);
+          LogDiagnostic('Unit Import Graph: ' + AError);
           Exit;
         end;
         ReportUnderWaitDialog(Length(AGraph.Edges) + 1,
@@ -341,7 +343,7 @@ begin
     begin
       GRunning := False;
       CloseWaitDialog;
-      LogDiagnostic(Format('Import Graph: unhandled %s: %s',
+      LogDiagnostic(Format('Unit Import Graph: unhandled %s: %s',
         [E.ClassName, E.Message]));
     end;
   end;
