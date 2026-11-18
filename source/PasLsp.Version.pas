@@ -564,7 +564,10 @@ const
   /// 0.212.0 (2026-11-18): SetPackages - a unit that exists only inside a
   /// required package's .dcp (designide.dcp's DockForm) resolves; an older
   /// library has no SetPackages (a compile error).
-  cMinPasTreeVersion = '0.212.0';
+  /// 0.212.2 (2026-11-18): an interface variable or typed constant of a
+  /// unit inside a .dcp is read with its type; an older library prints
+  /// __PasTreeUnresolved for each (an E2003 in its generated tab).
+  cMinPasTreeVersion = '0.212.2';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and
