@@ -278,6 +278,33 @@ begin
   CheckHit('  X.&inherited;', 7, '', '&inherited is an identifier');
   CheckHit('  inheritedX;', 4, '', 'a longer identifier');
 end;
+
+{ PasTreeIdePlugin.DirectiveText.DottedHeadBefore: the head a `uses` list
+  is filtered by while the IDE filters by the last segment. `|` marks the
+  caret in the check names. }
+procedure TestDottedHead;
+const
+  cLine = '  System.Win.Reg, Vcl.';
+begin
+  Writeln;
+  Writeln('dotted head before the caret');
+
+  CheckEq(DottedHeadBefore(cLine, 17), 'System.Win.', 'System.Win.Reg|');
+  CheckEq(DottedHeadBefore(cLine, 15), 'System.Win.', 'System.Win.R|eg');
+  CheckEq(DottedHeadBefore(cLine, 14), 'System.Win.', 'System.Win.|Reg');
+  CheckEq(DottedHeadBefore(cLine, 13), 'System.', 'System.Win|.Reg');
+  CheckEq(DottedHeadBefore(cLine, 9), '', 'System|.Win.Reg');
+  CheckEq(DottedHeadBefore(cLine, 23), 'Vcl.', 'Vcl.| at the end of the line');
+  CheckEq(DottedHeadBefore(cLine, 99), 'Vcl.', 'a column past the end');
+  CheckEq(DottedHeadBefore('A.B.C.', 7), 'A.B.C.', 'single letters');
+  CheckEq(DottedHeadBefore('  Foo', 6), '', 'no dot');
+  CheckEq(DottedHeadBefore('', 1), '', 'an empty line');
+  CheckEq(DottedHeadBefore('X := .Foo', 10), '', 'a dot with no name before');
+  CheckEq(DottedHeadBefore('X..Foo.Bar', 11), 'Foo.', 'stops at a double dot');
+  CheckEq(DottedHeadBefore('1A.Foo', 7), '', 'a digit-led segment is no name');
+  CheckEq(DottedHeadBefore('Vcl. Gr', 8), '', 'a blank ends the name');
+end;
+
 { PasTreeIdePlugin.TokenShift: the last tokens answer carried onto the text
   on screen. The base is what the answer describes; each case is a line as
   the editor holds it now, and where the TList token (row 5, [12, 17)) is
@@ -642,6 +669,7 @@ begin
   TestPositions;
   TestDirectiveSymbol;
   TestInheritedKeyword;
+  TestDottedHead;
   TestTokenShift;
   TestConfigSwitch;
   TestFormatText;

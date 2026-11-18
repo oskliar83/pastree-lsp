@@ -179,6 +179,7 @@ uses
   PasTreeIdePlugin.LspDocuments,
   PasTreeIdePlugin.DcuNames,
   PasTreeIdePlugin.DcuSource,
+  PasTreeIdePlugin.DirectiveText,   // DottedHeadBefore
   PasTreeIdePlugin.ResultRows,   // PaintSyntaxTextTyped, EditorSyntaxColor
   PasTreeIdePlugin.OptionSets,   // the InsightManager reads and writes
   // IInternalSupportErrorInsight, and the switch of the native Error Insight
@@ -2164,6 +2165,87 @@ begin
   end;
 end;
 
+{ The dotted head of the name typed at the caret (DottedHeadBefore):
+  `Vcl.` for `Vcl.Gr|`, '' for `Gr|`, and AHeadCol the editor column it
+  starts at. Read leftwards through IOTAEditPosition, as WordAroundCaret,
+  over identifier characters and dots only - a column is the editor's own,
+  and a dotted name holds no tab. }
+function DottedHeadAtCaret(const APos: IOTAEditPosition;
+  out AHeadCol: Integer): string;
+var
+  LRow, LCol, LSeg: Integer;
+  LText: string;
+  LChar: Char;
+begin
+  Result := '';
+  AHeadCol := 0;
+  LRow := APos.Row;
+  LCol := APos.Column;
+  LText := '';
+  try
+    while (APos.Column > 1) and (Length(LText) < 512) do
+    begin
+      APos.MoveRelative(0, -1);
+      LChar := APos.Character;
+      if not ((LChar = '_') or (LChar = '.') or LChar.IsLetterOrDigit) then
+        Break;
+      LText := LChar + LText;
+    end;
+  finally
+    APos.Move(LRow, LCol);
+  end;
+  Result := DottedHeadBefore(LText, Length(LText) + 1);
+  // The segment typed is LText's trailing identifier characters; the head
+  // ends right before it.
+  LSeg := 0;
+  while (LSeg < Length(LText)) and
+        (LText[Length(LText) - LSeg] <> '.') do
+    Inc(LSeg);
+  AHeadCol := LCol - LSeg - Length(Result);
+end;
+
+{ A list under a dotted head. Where the server answers whole dotted names,
+  it says so by the replace span: the span covers the whole name typed so
+  far, head included - a `uses` clause's unit rows (PasTree's
+  ExtendUsesPrefix) - which a client filtering by that span, as VS Code
+  does, matches. The IDE filters by the last segment and replaces only it,
+  so after `Vcl.Imaging.` it showed every unit (an empty filter) and an
+  accept would have written the head twice. So here: of the rows whose span
+  starts where the head does (AHeadCol), only those under the head stay,
+  shown and inserted without it - `JPEG` for `Vcl.Imaging.JPEG` - and the
+  IDE's own filter and accept then work on the segment. The span is the
+  whole rule: which rows are whole names is the server's call, not this
+  plugin's. A row replacing the segment alone passes unchanged - a member
+  of `TOuter.|`, or the next segments `Winapi.|` lists in a statement
+  (`Windows`). }
+function UnderDottedHead(const AItems: TArray<TLspCompletionItem>;
+  const AHead: string; AHeadCol: Integer): TArray<TLspCompletionItem>;
+var
+  LIdx, LCount: Integer;
+begin
+  if AHead = '' then
+    Exit(AItems);
+  SetLength(Result, Length(AItems));
+  LCount := 0;
+  for LIdx := 0 to High(AItems) do
+  begin
+    if AItems[LIdx].ColFrom = AHeadCol then
+    begin
+      if (Length(AItems[LIdx].ItemLabel) <= Length(AHead)) or
+         not StartsText(AHead, AItems[LIdx].ItemLabel) then
+        Continue;
+      Result[LCount] := AItems[LIdx];
+      Result[LCount].ItemLabel := Copy(AItems[LIdx].ItemLabel,
+        Length(AHead) + 1, MaxInt);
+      Result[LCount].ColFrom := AItems[LIdx].ColFrom + Length(AHead);
+    end
+    else
+      Result[LCount] := AItems[LIdx];
+    Inc(LCount);
+  end;
+  SetLength(Result, LCount);
+end;
+
 procedure TPasCodeInsightManager.Done(Accepted: Boolean;
   out DisplayParams: Boolean);
 var
@@ -2338,9 +2420,9 @@ function TPasCodeInsightManager.AsyncInvokeCodeCompletion(
   AHowInvoked: TOTAInvokeType; var AStr: string; ALine, ACharIndex: Integer;
   ACallback: TOTACodeCompleteCallBack): Integer;
 var
-  LId, LRow, LCol: Integer;
+  LId, LRow, LCol, LHeadCol: Integer;
   LView: IOTAEditView;
-  LFileName: string;
+  LFileName, LHead: string;
   LInInvoke: Boolean;
   LOptions: TInsightFilterOptions;
 begin
@@ -2364,6 +2446,9 @@ begin
   // parameters alongside until the convention is understood.
   LRow := LView.Buffer.EditPosition.Row;
   LCol := LView.Buffer.EditPosition.Column;
+  // Read now, from the text the request is made for: the answer comes back
+  // later, when the buffer may have moved on.
+  LHead := DottedHeadAtCaret(LView.Buffer.EditPosition, LHeadCol);
   Inc(FNextId);
   LId := FNextId;
   FActiveId := LId;
@@ -2381,8 +2466,8 @@ begin
       FActiveId := 0;
       if ASuccess then
       begin
-        FSymbolsObj := TPasSymbolList.Create(WithoutKeywords(AItems,
-          not LOptions.ReservedWords), LOptions);
+        FSymbolsObj := TPasSymbolList.Create(UnderDottedHead(WithoutKeywords(
+          AItems, not LOptions.ReservedWords), LHead, LHeadCol), LOptions);
         FSymbols := FSymbolsObj;
       end
       else

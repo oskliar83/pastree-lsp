@@ -53,6 +53,17 @@ function UnaskedLinkAt(const ALine: string; ACol: Integer;
 function IdentRunAt(const S: string; ACol: Integer;
   out AFrom, ATo: Integer): Boolean;
 
+/// <summary>
+/// The dotted head left of the name being typed at 1-based ACol of ALine -
+/// `System.Win.` for `System.Win.Reg|` and for `System.Win.|` - or '' when
+/// the name has no dot before it. Identifier segments each followed by a
+/// dot, written without blanks. Code completion filters the rows the server
+/// answers as whole dotted names (a `uses` clause's units) by it, since the
+/// IDE filters by the last segment alone (PasTreeIdePlugin.CodeInsight,
+/// UnderDottedHead).
+/// </summary>
+function DottedHeadBefore(const ALine: string; ACol: Integer): string;
+
 implementation
 
 uses
@@ -250,6 +261,39 @@ function UnaskedLinkAt(const ALine: string; ACol: Integer;
 begin
   Result := DirectiveNameAt(ALine, ACol, AFrom, ATo)
     or InheritedKeywordAt(ALine, ACol, AFrom, ATo);
+end;
+
+function DottedHeadBefore(const ALine: string; ACol: Integer): string;
+var
+  LIdx, LSeg, LFrom: Integer;
+begin
+  Result := '';
+  if ACol > Length(ALine) + 1 then
+    ACol := Length(ALine) + 1;
+  // Past the segment being typed (empty right after a dot).
+  LIdx := ACol - 1;
+  while (LIdx >= 1) and IsIdentChar(ALine[LIdx]) do
+    Dec(LIdx);
+  LFrom := LIdx + 1;
+  // Then `ident.` pairs leftward; a dot with no identifier before it stops
+  // the walk with the pairs already taken.
+  while (LIdx >= 1) and (ALine[LIdx] = '.') do
+  begin
+    LSeg := LIdx - 1;
+    while (LSeg >= 1) and IsIdentChar(ALine[LSeg]) do
+      Dec(LSeg);
+    if (LSeg = LIdx - 1) or not IsIdentStart(ALine[LSeg + 1]) then
+      Break;
+    LFrom := LSeg + 1;
+    LIdx := LSeg;
+  end;
+  // LFrom is the head's first character; the segment typed starts after
+  // the last dot.
+  LIdx := ACol - 1;
+  while (LIdx >= 1) and IsIdentChar(ALine[LIdx]) do
+    Dec(LIdx);
+  if LFrom <= LIdx then
+    Result := Copy(ALine, LFrom, LIdx - LFrom + 1);
 end;
 
 end.
