@@ -767,7 +767,7 @@ type
     Pattern, Short: string;
   end;
 const
-  cRules: array[0..11] of TRule = (
+  cRules: array[0..12] of TRule = (
     (Pattern: '^the value assigned at (\S+) is computed by code';
      Short: 'assigned a computed value at $1'),
     (Pattern: '^the name is written in a branch this configuration does not compile \(([^)]*)\)';
@@ -791,7 +791,10 @@ const
     (Pattern: '^it holds an interface reference';
      Short: 'holds an interface'),
     (Pattern: '^(\S+), which uses it, has a doubt';
-     Short: 'used by doubtful $1'));
+     Short: 'used by doubtful $1'),
+    // PasTree 0.211.0: published in a class that does not stream.
+    (Pattern: '^published - ';
+     Short: 'published'));
 var
   LMatch: TMatch;
 begin
