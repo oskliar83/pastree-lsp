@@ -561,7 +561,10 @@ const
   /// 0.211.0 (2026-11-18): a published member of a class that does not
   /// stream (ancestry known, no TPersistent) is weighed - a row with the
   /// doubt `published`; an older library never shows one.
-  cMinPasTreeVersion = '0.211.0';
+  /// 0.212.0 (2026-11-18): SetPackages - a unit that exists only inside a
+  /// required package's .dcp (designide.dcp's DockForm) resolves; an older
+  /// library has no SetPackages (a compile error).
+  cMinPasTreeVersion = '0.212.0';
 
 /// <summary>
 /// One line naming the product version, the PasTree it was built against, and

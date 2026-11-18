@@ -232,6 +232,11 @@ type
     FSearchPaths: TArray<string>;
     FDefines: TArray<string>;
     FNamespaces: TArray<string>;
+    // The packages a package project requires (TPasDProj.Requires): a unit
+    // that exists only inside one of their .dcp files (designide.dcp's
+    // DockForm) is found there, as dcc finds it - never in a .dcp that is
+    // merely on the path (PasTree's SetPackages).
+    FPackages: TArray<string>;
     FAliases: TArray<TPasUnitAlias>;
     // THE INSTALLED LIBRARY TREES, and only those: RTL/VCL/ToolsAPI and the
     // third-party sources the IDE knows about, never the project's own
@@ -1109,9 +1114,9 @@ const
   // The parts of a .dproj the server takes at initialize, in the order
   // DProjSignature returns them - what pastree/projectChanged names when one
   // differs.
-  cDProjParts: array[0..8] of string = ('main source', 'platform',
+  cDProjParts: array[0..9] of string = ('main source', 'platform',
     'search paths', 'defines', 'unit list', 'namespaces', 'unit aliases',
-    'compiler switches', 'console target');
+    'compiler switches', 'console target', 'required packages');
 
 { What of a loaded .dproj the analysis depends on, one string per part of
   cDProjParts. Order-preserving on purpose: the search path order decides
@@ -1141,7 +1146,7 @@ begin
   Result := [ADProj.MainSource, PlatformName(ADProj.Platform),
     Joined(ADProj.SearchPaths), Joined(ADProj.Defines), Joined(LFiles),
     Joined(ADProj.Namespaces), Joined(LAliases), Joined(ADProj.Switches),
-    BoolToStr(ADProj.ConsoleTarget, True)];
+    BoolToStr(ADProj.ConsoleTarget, True), Joined(ADProj.Requires)];
 end;
 
 { The CONSOLE the units compiled with program AModel get: its last live
@@ -1334,6 +1339,7 @@ begin
         FDefines := LDProj.Defines;
         FSwitches := LDProj.Switches;
         FConsoleTarget := LDProj.ConsoleTarget;
+        FPackages := LDProj.Requires;
         // Every unit the project lists, main source included - see
         // FProjectFiles. Only .pas rows can name a unit; a .dfm/.res row in
         // the list would pin a non-unit under a unit's name.
@@ -1632,6 +1638,7 @@ begin
   FSession := TPasAsyncSession.Create(FPlatform, FSearchPaths, FDefines,
     LRoots, LPriority, FCompilerVersion);
   FSession.SetNamespaces(FNamespaces);
+  FSession.SetPackages(FPackages);
   // A member after a dot that nothing resolves (`Grid.Canvas2`) is E2003 too.
   // PasTree leaves it off by default - a false E2003 on a member is worse
   // than a missing one - and without it the squiggles missed the most common
@@ -2988,6 +2995,7 @@ begin
     FCompilerVersion);
   try
     Result.SetNamespaces(FNamespaces);
+    Result.SetPackages(FPackages);
     Result.ReportUnresolvedMembers := True;
     Result.ReportUndeclaredBehindMissingUnits := FUndeclaredBehindMissing;
     Result.DcuTextFilter := DcuFilterFromConfig();
