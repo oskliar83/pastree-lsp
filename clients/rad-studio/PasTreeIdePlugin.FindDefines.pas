@@ -1,11 +1,15 @@
 unit PasTreeIdePlugin.FindDefines;
 
 {
-  "Find All > Defines" and "Defines at cursor" entry points, wired to the
+  "Defines at cursor" and "Options at cursor" entry points, wired to the
   editor's Find All submenu (see PasTreeIdePlugin.Wizard) - the IDE side of
-  PasTree 0.28.0's two cursor-free define inventories (FindDefines,
-  DefinesAt; docs/editor-features.md section 10 in the PasTree repo owns the
+  PasTree 0.28.0's DefinesAt and 0.112.0's OptionsAt
+  (docs/editor-features.md section 10 in the PasTree repo owns the
   contract).
+
+  "Find All > Defines", the project-wide inventory (`pastree/findDefines`),
+  was the third command here until 0.94.4, when Alex dropped it as of little
+  use (2026-11-19); the server still answers the method.
 
   Modeled on PasTreeIdePlugin.FindReferences, which owns the longer story on
   why this runs out of process. Three differences from that unit:
@@ -16,14 +20,14 @@ unit PasTreeIdePlugin.FindDefines;
       other text is what produced two wrong highlights on 2026-09-14).
 
 
-    - BOTH commands need NO IDENTITY at the caret - `pastree/findDefines` is
-      a project-wide inventory and `pastree/definesAt` replays the model's
-      define state up to the cursor, so neither can answer "nothing here"
-      the way a reference search can. They are always offered (no findAllAt
-      gate, unlike the seven Find All commands - see SPEC.md).
+    - BOTH commands need NO IDENTITY at the caret - `pastree/definesAt`
+      replays the model's define state up to the cursor, and
+      `pastree/optionsAt` its option state - so neither can answer "nothing
+      here" the way a reference search can. They are always offered (no
+      findAllAt gate, unlike the seven Find All commands - see SPEC.md).
 
-    - PROJECT-SCOPED, DELIBERATELY, unlike Find References: LspFindDefines
-      and LspDefinesAt ask only the active file's own server
+    - PROJECT-SCOPED, DELIBERATELY, unlike Find References: LspDefinesAt
+      and LspOptionsAt ask only the active file's own server
       (LspSession.SessionForRequest), never LspXxxInGroup. A conditional
       symbol is a project-local fact - PasTree's docs note plainly that a
       $DEFINE is unit-local and a define one project of a group makes is not
@@ -31,24 +35,19 @@ unit PasTreeIdePlugin.FindDefines;
       would answer a question nobody asked, unlike a shared unit's
       references, which really are one fact seen from two closures.
 
-  Three commands, one Messages tab ("Find Defines"), cleared and rebuilt on
-  each call - the tab's title line says which one ran. The third, `Options
-  at cursor` (PasTree 0.112.0, OptionsAt; `pastree/optionsAt`), is the
-  same question about compiler options - what an $IFOPT written there would
-  see - asked and shown as Defines at cursor is, a flat list. `Find All > Defines`
-  groups by file (one header per file, as Find References does) plus two
-  more groups, "Project defines" and "Platform defines" - the PasTree demo's
-  own shape (AGroupKeys). `Defines at cursor` is a FLAT list, one row per
-  name in effect, each showing the $DEFINE that put it there.
+  Two commands, a Messages tab each ("Defines at cursor", "Options at
+  cursor"), cleared and rebuilt by the next call of the same command - they
+  shared one tab until 0.94.4, where the second answer wiped out the first
+  (Alex, 2026-11-19). `Defines at cursor` is a FLAT list, one row per name
+  in effect, each showing the $DEFINE that put it there; `Options at cursor`
+  is the same question about compiler options - what an $IFOPT written
+  there would see - asked and shown the same way.
 }
 
 interface
 
 uses
   ToolsAPI;
-
-/// <summary>Find All > Defines: the project-wide inventory.</summary>
-procedure ExecuteFindDefines(const AView: IOTAEditView);
 
 /// <summary>Defines at cursor: the flat in-effect set.</summary>
 procedure ExecuteDefinesAtCursor(const AView: IOTAEditView);
@@ -57,7 +56,7 @@ procedure ExecuteDefinesAtCursor(const AView: IOTAEditView);
 procedure ExecuteOptionsAtCursor(const AView: IOTAEditView);
 
 /// <summary>
-/// Removes the "Find Defines" Messages tab - call once from
+/// Removes the two Messages tabs - call once from
 /// TIDEWizard.Destroy, before FinalizeLspSession, exactly as
 /// FinalizeFindReferencesMessageGroup does and for the same reason (see its
 /// own header comment: a callback landing after the group's vtable is
@@ -65,81 +64,39 @@ procedure ExecuteOptionsAtCursor(const AView: IOTAEditView);
 /// </summary>
 procedure FinalizeFindDefinesMessageGroup;
 
-/// <summary>Drops the results tab because the project it describes is closing.</summary>
+/// <summary>Drops the results tabs because the project they describe is closing.</summary>
 procedure CloseFindDefinesResults;
 
 implementation
 
 uses
-  System.SysUtils, System.Generics.Collections, Vcl.Forms,
+  System.SysUtils,
   PasTreeIdePlugin.IdeUI, PasTreeIdePlugin.LspSession, PasTreeIdePlugin.ResultRows,
-  PasTreeIdePlugin.WaitDialog, PasTreeIdePlugin.RenameToolbar;
+  PasTreeIdePlugin.WaitDialog, PasTreeIdePlugin.RenameToolbar,
+  PasTreeIdePlugin.FindReferences;   // GetOrCreateResultTab, RemoveResultTabs
 
 const
-  cMessageGroupName = 'Find Defines';
-  cProjectGroupLabel = 'Project defines';
-  cPlatformGroupLabel = 'Platform defines';
+  // The tabs' names: the menu items' captions, as the Find All family's
+  // tabs are named after their commands (FindReferences.GetOrCreateResultTab,
+  // whose registry these two share).
+  cDefinesTabName = 'Defines at cursor';
+  cOptionsTabName = 'Options at cursor';
 
 var
-  // Same lifecycle as FindReferences' GMessageGroup/GAlive - see that unit's
-  // header for why this is hygiene (orphaned IDE resource) for the group and
-  // a real crash guard (dangling BPL code) for the gate.
-  GMessageGroup: IOTAMessageGroup;
+  // The teardown gate - see FindReferences.GAlive for the crash it prevents.
   GAlive: Boolean = True;
 
-function GetOrCreateMessageGroup(
-  const AMessageServices: IOTAMessageServices): IOTAMessageGroup;
-begin
-  // Looked up every time, never trusted from the last search: a tab the user
-  // closed is a group the IDE has dropped - see
-  // FindReferences.GetOrCreateMessageGroup for the AV.
-  GMessageGroup := AMessageServices.GetGroup(cMessageGroupName);
-  if not Assigned(GMessageGroup) then
-    GMessageGroup := AMessageServices.AddMessageGroup(cMessageGroupName);
-  Result := GMessageGroup;
-end;
-
-// Removes the tab only while the IDE still has it - one the user closed is
-// gone already, and the reference held here is not it.
-procedure RemoveLiveGroup(const AMessageServices: IOTAMessageServices);
-var
-  LGroup: IOTAMessageGroup;
-begin
-  LGroup := AMessageServices.GetGroup(cMessageGroupName);
-  if Assigned(LGroup) then
-    AMessageServices.RemoveMessageGroup(LGroup);
-end;
-
 // Not at IDE shutdown - see FindReferences.FinalizeFindReferencesMessageGroup
-// for the AV this guards against; the same reasoning applies verbatim here.
+// for the AV this guards against; RemoveResultTabs honours it.
 procedure FinalizeFindDefinesMessageGroup;
-var
-  LMessageServices: IOTAMessageServices;
 begin
   GAlive := False;
-  if Assigned(GMessageGroup) and not Application.Terminated and
-     Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
-    try
-      RemoveLiveGroup(LMessageServices);
-    except
-      // See FinalizeFindReferencesMessageGroup: cosmetic cleanup, no panel
-      // left to report a failure to.
-    end;
-  GMessageGroup := nil;
+  RemoveResultTabs;
 end;
 
 procedure CloseFindDefinesResults;
-var
-  LMessageServices: IOTAMessageServices;
 begin
-  if Assigned(GMessageGroup) and not Application.Terminated and
-     Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
-    try
-      RemoveLiveGroup(LMessageServices);
-    except
-      // As above - a closing project asked nothing of the Messages panel.
-    end;
-  GMessageGroup := nil;
+  RemoveResultTabs;
 end;
 
 procedure LogDiagnostic(const AMessage: string);
@@ -208,78 +165,6 @@ begin
 end;
 
 /// <summary>
-/// Find All > Defines: grouped like Find References (one header per file),
-/// plus "Project defines" and "Platform defines" as two groups of their
-/// own, in whatever order the server already sorted them (file/line/col,
-/// then project names, then platform names).
-/// </summary>
-procedure ReportFindDefines(const ARows: TArray<TLspDefineRow>);
-var
-  LMessageServices: IOTAMessageServices;
-  LGroup: IOTAMessageGroup;
-  LGroupCounts: TDictionary<string, Integer>;
-  LGroupHeaders: TDictionary<string, Pointer>;
-  LRow: TLspDefineRow;
-  LKey, LLabel: string;
-  LParentRef: Pointer;
-  LDisplay: string;
-  LMatchStart, LMatchLen, LExisting: Integer;
-
-  function GroupKeyAndLabel(const ARow: TLspDefineRow;
-    out ALabel: string): string;
-  begin
-    if ARow.Origin = 'project' then
-      ALabel := cProjectGroupLabel
-    else if ARow.Origin = 'platform' then
-      ALabel := cPlatformGroupLabel
-    else
-      ALabel := ARow.Hit.FilePath;
-    Result := LowerCase(ALabel);
-  end;
-
-begin
-  if not Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
-    Exit;
-  LGroup := GetOrCreateMessageGroup(LMessageServices);
-  LMessageServices.ClearMessageGroup(LGroup);
-  LMessageServices.AddCustomMessagePtr(
-    NewTitleRow(Format('PasTree Find All Defines: %d define(s)',
-      [Length(ARows)])), LGroup);
-
-  LGroupCounts := TDictionary<string, Integer>.Create;
-  LGroupHeaders := TDictionary<string, Pointer>.Create;
-  try
-    for LRow in ARows do
-    begin
-      LKey := GroupKeyAndLabel(LRow, LLabel);
-      LGroupCounts.TryGetValue(LKey, LExisting);
-      LGroupCounts.AddOrSetValue(LKey, LExisting + 1);
-    end;
-    for LRow in ARows do
-    begin
-      LKey := GroupKeyAndLabel(LRow, LLabel);
-      if not LGroupHeaders.TryGetValue(LKey, LParentRef) then
-      begin
-        LParentRef := LMessageServices.AddCustomMessagePtr(
-          NewFileHeaderRow(LLabel, LGroupCounts[LKey]), LGroup);
-        LGroupHeaders.Add(LKey, LParentRef);
-      end;
-      LDisplay := DisplaySnippet(LRow, LMatchStart, LMatchLen);
-      LMessageServices.AddCustomMessage(
-        NewSnippetRow(LRow.Hit.FilePath, LRow.Hit.Row, LRow.Hit.Col,
-          LDisplay, LMatchStart, LMatchLen, OriginTag(LRow),
-          LRow.Hit.TypeSpans),
-        LParentRef);
-    end;
-  finally
-    LGroupHeaders.Free;
-    LGroupCounts.Free;
-  end;
-  LMessageServices.ShowMessageView(LGroup);
-  ResultScrollToTop;
-end;
-
-/// <summary>
 /// Defines at cursor: a flat list, one row per name in effect, prefixed with
 /// the defining file and line - no grouping, since "in effect here" is
 /// already the whole answer.
@@ -294,7 +179,7 @@ var
 begin
   if not Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
     Exit;
-  LGroup := GetOrCreateMessageGroup(LMessageServices);
+  LGroup := GetOrCreateResultTab(LMessageServices, cDefinesTabName, '');
   LMessageServices.ClearMessageGroup(LGroup);
   LMessageServices.AddCustomMessagePtr(
     NewTitleRow(Format('PasTree Defines at cursor: %d name(s) in effect',
@@ -355,7 +240,7 @@ begin
   for LRow in ARows do
     if LRow.Origin = 'unit' then
       Inc(LUnitRows);
-  LGroup := GetOrCreateMessageGroup(LMessageServices);
+  LGroup := GetOrCreateResultTab(LMessageServices, cOptionsTabName, '');
   LMessageServices.ClearMessageGroup(LGroup);
   LMessageServices.AddCustomMessagePtr(
     NewTitleRow(Format('PasTree Options at cursor: %d option(s), %d set in units',
@@ -375,46 +260,6 @@ begin
   end;
   LMessageServices.ShowMessageView(LGroup);
   ResultScrollToTop;
-end;
-
-procedure ExecuteFindDefines(const AView: IOTAEditView);
-var
-  LCursorFile: string;
-begin
-  try
-    if not Assigned(AView) then
-      Exit;
-    LCursorFile := AView.Buffer.FileName;
-    ShowWaitDialog('Searching defines...');
-    LspLogDetail('findDefines: asking ' + ExtractFileName(LCursorFile));
-    LspFindDefines(LCursorFile,
-      procedure(ASuccess: Boolean; const ARows: TArray<TLspDefineRow>;
-        const AError: string)
-      begin
-        LspLogDetail(Format('findDefines: answer ok=%s rows=%d err=%s',
-          [BoolToStr(ASuccess, True), Length(ARows), AError]));
-        if not GAlive then
-          Exit;
-        if not ASuccess then
-        begin
-          CloseWaitDialog;   // before anything that can talk to the user
-          LogDiagnostic('Find All Defines: ' + AError);
-          Exit;
-        end;
-        ReportUnderWaitDialog(Length(ARows),
-          procedure
-          begin
-            ReportFindDefines(ARows);
-          end);
-      end);
-  except
-    on E: Exception do
-    begin
-      CloseWaitDialog;
-      LogDiagnostic(Format('Find All Defines: unhandled %s: %s',
-        [E.ClassName, E.Message]));
-    end;
-  end;
 end;
 
 procedure ExecuteDefinesAtCursor(const AView: IOTAEditView);

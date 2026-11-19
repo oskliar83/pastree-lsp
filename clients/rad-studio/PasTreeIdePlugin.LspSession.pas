@@ -178,7 +178,7 @@ type
   end;
 
   /// <summary>
-  /// Delivered on the main thread, once, for LspFindDefines/LspDefinesAt.
+  /// Delivered on the main thread, once, for LspDefinesAt/LspOptionsAt.
   /// </summary>
   TLspDefinesProc = reference to procedure(ASuccess: Boolean;
     const ARows: TArray<TLspDefineRow>; const AError: string);
@@ -909,21 +909,13 @@ function LspFindAllAt(const AFileName: string; ARow, ACol: Integer;
   ATimeoutMs: Cardinal): TLspFindAllGate;
 
 /// <summary>
-/// The project-wide inventory of every $DEFINE, project define and platform
-/// define (PasTree 0.28.0, FindDefines) - needs no cursor. Deliberately NOT
-/// group-wide, unlike LspReferencesInGroup/LspFindAllInGroup: AFileName only
-/// picks which project's server answers (SessionForRequest), because a
-/// conditional symbol is a project-local fact - a name one project of a
-/// group defines is not in effect in another's compile at all - so "every
-/// project this file belongs to" would answer a question nobody asked.
-/// </summary>
-procedure LspFindDefines(const AFileName: string;
-  const AOnDone: TLspDefinesProc);
-
-/// <summary>
 /// The set of conditional-symbol names in effect at an IDE position
 /// (PasTree 0.28.0, DefinesAt) - what an $IFDEF written there would see, one
-/// row per name. Project-scoped like LspFindDefines, for the same reason.
+/// row per name. Deliberately NOT group-wide, unlike
+/// LspReferencesInGroup/LspFindAllInGroup: AFileName only picks which
+/// project's server answers (SessionForRequest), because a conditional
+/// symbol is a project-local fact - a name one project of a group defines is
+/// not in effect in another's compile at all.
 /// AFileName need not have a model of its own (an opened .inc): the answer
 /// is then the project's base set alone.
 /// </summary>
@@ -6714,21 +6706,6 @@ begin
   end;
   LSession.References(AFileName, ARow, ACol, AIncludeDeclaration, False,
     AOnDone);
-end;
-
-procedure LspFindDefines(const AFileName: string;
-  const AOnDone: TLspDefinesProc);
-var
-  LSession: TLspSession;
-begin
-  LSession := SessionForRequest(AFileName);
-  if LSession = nil then
-  begin
-    AOnDone(False, nil, 'LSP session not initialized');
-    Exit;
-  end;
-  LSession.Defines('pastree/findDefines', AFileName, {AHasPosition} False,
-    0, 0, AOnDone);
 end;
 
 procedure LspDefinesAt(const AFileName: string; ARow, ACol: Integer;

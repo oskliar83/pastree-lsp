@@ -47,10 +47,12 @@ unit PasTreeIdePlugin.FindHierarchy;
   All six run out of process (one pastree/find* method each, via
   PasTreeIdePlugin.LspSession.LspFindAllInGroup), across the project group
   the way Find References does since 0.32.0, and report into a tab of their
-  own in the Messages panel - the rows come from PasTreeIdePlugin.ResultRows,
-  and the label after a snippet follows the references tab exactly: the row
-  the search started from is tagged "definition" and no other row is tagged
-  at all (see RowTag for what that label used to say and why it went).
+  own in the Messages panel, one per command and name searched ("Overrides:
+  Paint", FindReferences.GetOrCreateResultTab) - the rows come
+  from PasTreeIdePlugin.ResultRows, and the label after a snippet follows
+  the references tab exactly: the row the search started from is tagged
+  "definition" and no other row is tagged at all (see RowTag for what that
+  label used to say and why it went).
 
   THE MENU ITEMS ARE GATED ON THE CARET SINCE 0.37.0, the way PasTree's demo
   gates its own: one synchronous pastree/findAllAt on the submenu's OnUpdate,
@@ -104,23 +106,28 @@ implementation
 
 uses
   System.SysUtils, System.Character, System.Generics.Collections,
-  Vcl.Dialogs, Vcl.Forms,
+  Vcl.Dialogs,
   PasTreeIdePlugin.IdeUI, PasTreeIdePlugin.LspSession, PasTreeIdePlugin.ResultRows,
   PasTreeIdePlugin.WaitDialog, PasTreeIdePlugin.GroupScope,
   PasTreeIdePlugin.RenameToolbar,
-  PasTreeIdePlugin.FindReferences;   // IdentifierAt, for the scope dialog
+  PasTreeIdePlugin.FindReferences;   // IdentifierAt, GetOrCreateResultTab
 
 const
   cMethod: array[TFindAllCommand] of string =
     ('pastree/findOverrides', 'pastree/findImplementations',
      'pastree/findDescendants', 'pastree/findAssignments',
      'pastree/findCreations', 'pastree/findDestructions');
-  // The tab's name and the command's name are one string: "Find Overrides"
-  // is what the submenu item reads as when its parent's caption is joined
-  // to it, and a tab called anything else would not be found by eye.
+  // The command's name, for the title row and the log: "Find Overrides" is
+  // what the submenu item reads as when its parent's caption is joined to
+  // it. The tab was named so too until 0.94.4 (cTabName).
   cCommandName: array[TFindAllCommand] of string =
     ('Find Overrides', 'Find Implementations', 'Find Descendants',
      'Find Assignments', 'Find Creations', 'Find Destructions');
+  // The tab's name before the subject - the command's without "Find", which
+  // every tab of the family repeated (Alex, 2026-11-19): "Overrides: Paint".
+  cTabName: array[TFindAllCommand] of string =
+    ('Overrides', 'Implementations', 'Descendants', 'Assignments',
+     'Creations', 'Destructions');
   // The scope dialog's title - the submenu's full path, as the user sees it.
   cDialogCaption: array[TFindAllCommand] of string =
     ('Find All Overrides', 'Find All Implementations',
@@ -160,60 +167,31 @@ const
      'places a variable of exactly that static type is freed.');
 
 var
-  GMessageGroup: array[TFindAllCommand] of IOTAMessageGroup;
   // The teardown gate - see PasTreeIdePlugin.FindReferences.GAlive for the
   // crash it prevents (rows whose vtables live in a BPL being unloaded).
   GAlive: Boolean = True;
 
+// One tab per command AND subject - "Overrides: Paint" - kept in the
+// registry Find References keeps (FindReferences.GetOrCreateResultTab).
 function GetOrCreateMessageGroup(ACommand: TFindAllCommand;
+  const ASubject: string;
   const AMessageServices: IOTAMessageServices): IOTAMessageGroup;
 begin
-  // Looked up every time, never trusted from the last search: a tab the user
-  // closed is a group the IDE has dropped - see
-  // FindReferences.GetOrCreateMessageGroup for the AV.
-  GMessageGroup[ACommand] :=
-    AMessageServices.GetGroup(cCommandName[ACommand]);
-  if not Assigned(GMessageGroup[ACommand]) then
-    GMessageGroup[ACommand] :=
-      AMessageServices.AddMessageGroup(cCommandName[ACommand]);
-  Result := GMessageGroup[ACommand];
+  Result := GetOrCreateResultTab(AMessageServices, cTabName[ACommand],
+    ASubject);
 end;
 
-{ Not at IDE shutdown, and silently - the same two rules FindReferences
-  learned from the AVs of 2026-08-22/24: by the time a designtime package is
-  unloaded with the IDE closing, the Messages panel is gone and RemoveMessageGroup
-  faults inside the IDE. And only the tabs the IDE still has - one the user
-  closed is gone already, and the reference held here is not it. }
-procedure RemoveGroups;
-var
-  LMessageServices: IOTAMessageServices;
-  LCommand: TFindAllCommand;
-  LGroup: IOTAMessageGroup;
-begin
-  if not Application.Terminated and
-     Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
-    for LCommand := Low(TFindAllCommand) to High(TFindAllCommand) do
-      if Assigned(GMessageGroup[LCommand]) then
-        try
-          LGroup := LMessageServices.GetGroup(cCommandName[LCommand]);
-          if Assigned(LGroup) then
-            LMessageServices.RemoveMessageGroup(LGroup);
-        except
-          // Cosmetic cleanup; nothing to report to and nowhere to report it.
-        end;
-  for LCommand := Low(TFindAllCommand) to High(TFindAllCommand) do
-    GMessageGroup[LCommand] := nil;
-end;
-
+{ The registry is the family's, so these remove Find References' tabs too -
+  harmless: the wizard calls both, at the same moments. }
 procedure FinalizeFindHierarchyMessageGroups;
 begin
   GAlive := False;   // callbacks stop here, not later
-  RemoveGroups;
+  RemoveResultTabs;
 end;
 
 procedure CloseFindHierarchyResults;
 begin
-  RemoveGroups;   // GAlive untouched: the package lives on, the next search must work
+  RemoveResultTabs;   // GAlive untouched: the package lives on, the next search must work
 end;
 
 procedure LogDiagnostic(const AMessage: string);
@@ -402,7 +380,7 @@ begin
   if not Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
     Exit;
 
-  LGroup := GetOrCreateMessageGroup(ACommand, LMessageServices);
+  LGroup := GetOrCreateMessageGroup(ACommand, AName, LMessageServices);
   LMessageServices.ClearMessageGroup(LGroup);
 
   LFileCounts := TDictionary<string, Integer>.Create;
@@ -478,7 +456,7 @@ begin
   if not Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
     Exit;
 
-  LGroup := GetOrCreateMessageGroup(ACommand, LMessageServices);
+  LGroup := GetOrCreateMessageGroup(ACommand, AName, LMessageServices);
   LMessageServices.ClearMessageGroup(LGroup);
 
   LDescendants := 0;

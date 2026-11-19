@@ -129,7 +129,8 @@ Two commands for two identities, as PasTree draws the line (its
   Descendants' answer, the child's implementors this command on the child.
 
 Both run across the project group like Find References, and each reports into
-a tab of its own ("Find Overrides", "Find Implementations") shaped exactly like
+a tab of its own ("Overrides: Paint", "Implementations: IFoo")
+shaped exactly like
 the Find References tab - the row the search started from is tagged
 `(definition)` and no other row is tagged (0.37.8; the type-and-kind label
 every row used to carry repeated its own snippet), and the title carries the
@@ -428,8 +429,13 @@ starts from:
 - **Ctrl+Shift+Q** runs Find All > References (0.84.5). Not Ctrl+Shift+R,
   the first choice: the Default keymap records a keystroke macro on it. With
   the Find All submenu switched off in Settings the key goes back to the IDE.
-- Results go to a dedicated "Find References" tab in the Messages panel
-  (`IOTAMessageServices.AddMessageGroup`), grouped by file (one header row
+- Results go to a "References: <name>" tab in the Messages panel
+  (`IOTAMessageServices.AddMessageGroup`) - the next search for the same
+  name (compared case-insensitively) clears and reuses it, a search for
+  another name opens a tab of its own, for every Find All command alike
+  (0.94.4, `GetOrCreateResultTab`; Defines at cursor and Options at cursor
+  have a tab each, and Find All > Defines is no longer in the menu) -
+  grouped by file (one header row
   per file, the same `Parent`/`LineRef` tree structure "Find in Files" uses),
   each hit carrying file/line/column so the IDE's own message navigation
   (double-click, Enter, F8/Shift+F8) jumps straight to it.

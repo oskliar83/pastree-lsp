@@ -118,14 +118,17 @@ type
     out among the first seven - its command lives in
     PasTreeIdePlugin.FindReferences, the other six in
     PasTreeIdePlugin.FindHierarchy - which is why the two enums are not one.
-    The next three, Defines and DefinesAtCursor (PasTree 0.28.0) and
-    OptionsAtCursor (0.112.0), are a third family of their own in
+    The next two, DefinesAtCursor (PasTree 0.28.0) and OptionsAtCursor
+    (0.112.0), are a third family of their own in
     PasTreeIdePlugin.FindDefines: unlike the other seven they need NO
     IDENTITY at the caret - ItemApplies always answers
     True for them, there being no findAllAt gate to ask. }
   TFindAllItem = (faiReferences, faiOverrides, faiImplementations,
     faiDescendants, faiAssignments, faiCreations, faiDestructions,
-    faiDefines, faiDefinesAtCursor,
+    // Defines, the project-wide inventory, was an item here until 0.94.4:
+    // Alex found little use in it (2026-11-19). The server still answers
+    // pastree/findDefines.
+    faiDefinesAtCursor,
     // PasTree 0.112.0's OptionsAt: the same question about compiler
     // options, PasTreeIdePlugin.FindDefines too, never greyed.
     faiOptionsAtCursor,
@@ -340,14 +343,14 @@ const
   cItemName: array[TFindAllItem] of string =
     ('References', 'Overrides', 'Implementations', 'Descendants',
      'Assignments', 'Creations', 'Destructions',
-     'Defines', 'DefinesAtCursor', 'OptionsAtCursor',
+     'DefinesAtCursor', 'OptionsAtCursor',
      'Unused', 'ImportGraph');
   // What the menu actually shows - "Defines at cursor" reads as PasTree's
   // own demo has it, a space its Name/Category may not carry.
   cItemCaption: array[TFindAllItem] of string =
     ('References', 'Overrides', 'Implementations', 'Descendants',
      'Assignments', 'Creations', 'Destructions',
-     'Defines', 'Defines at cursor', 'Options at cursor',
+     'Defines at cursor', 'Options at cursor',
      'Unused...', 'Unit Import Graph');
 var
   LAction: TAction;
@@ -366,11 +369,11 @@ begin
 
   for LItem := Low(TFindAllItem) to High(TFindAllItem) do
   begin
-    { A RULE IN FRONT OF THE DEFINE INVENTORIES. The seven above answer
-      about the caret and grey themselves when it is not their subject;
-      these three answer about the PROJECT and are always enabled, which is a
-      different kind of command and reads as one with a line between them
-      (Alex, 2026-09-14).
+    { A RULE IN FRONT OF THE DEFINE AND OPTION LISTS. The seven above answer
+      about the identifier at the caret and grey themselves when it is not
+      their subject; these two answer about the POSITION and are always
+      enabled, which is a different kind of command and reads as one with
+      a line between them (Alex, 2026-09-14).
 
       Caption '-' is VCL's own spelling of a separator (TMenuItem.Caption),
       and the IDE builds its menu items from these actions - so the worst
@@ -379,7 +382,7 @@ begin
       OnFindAllItemUpdate leaves it alone: ItemOf answers False for it (it
       is in no FItemActions slot), which disables it - exactly what a
       separator wants to be. }
-    if LItem in [faiDefines, faiUnused] then
+    if LItem in [faiDefinesAtCursor, faiUnused] then
     begin
       // One more in front of the unused-units checks: a third family, as
       // the demo's menu groups them. Names and categories must differ.
@@ -638,11 +641,10 @@ begin
     faiAssignments:     Result := FGate.Assignments;
     faiCreations:       Result := FGate.Creations;
     faiDestructions:    Result := FGate.Destructions;
-    // Defines and DefinesAtCursor need no identity at the caret - PasTree's
-    // FindDefines/DefinesAt need no cursor at all - so findAllAt has no gate
-    // for them and they are always offered, exactly as PasTree's own demo
-    // greys nothing on these two.
-    faiDefines, faiDefinesAtCursor, faiOptionsAtCursor: Result := True;
+    // DefinesAtCursor and OptionsAtCursor need no identity at the caret -
+    // any position has a define and option state - so findAllAt has no gate
+    // for them and they are always offered.
+    faiDefinesAtCursor, faiOptionsAtCursor: Result := True;
     faiUnused, faiImportGraph: Result := True;
   else
     Result := True;
@@ -727,7 +729,6 @@ begin
       faiAssignments:     ExecuteFindAll(facAssignments, FEditorServices.TopView);
       faiCreations:       ExecuteFindAll(facCreations, FEditorServices.TopView);
       faiDestructions:    ExecuteFindAll(facDestructions, FEditorServices.TopView);
-      faiDefines:         ExecuteFindDefines(FEditorServices.TopView);
       faiDefinesAtCursor: ExecuteDefinesAtCursor(FEditorServices.TopView);
       faiOptionsAtCursor: ExecuteOptionsAtCursor(FEditorServices.TopView);
       faiUnused:          ExecuteUnused(FEditorServices.TopView);

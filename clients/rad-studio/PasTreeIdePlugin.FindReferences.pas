@@ -10,9 +10,10 @@ unit PasTreeIdePlugin.FindReferences;
   three-identity resolve (symbol / unit / builtin) lives in the server now -
   one implementation shared with every other LSP client.
 
-    - Results go to a dedicated "Find References" tab in the Messages
-      panel (see ReportHits), grouped by file: one owner-drawn header row
-      per file, one owner-drawn snippet row per hit (custom message tree
+    - Results go to a "References: <name>" tab in the Messages
+      panel, one per name searched (GetOrCreateResultTab, ReportHits),
+      grouped by file: one owner-drawn header row per file, one
+      owner-drawn snippet row per hit (custom message tree
       via AddCustomMessagePtr/AddCustomMessage Parent pointers - the
       custom-message parallel of the AddToolMessage tree "Find in Files"
       uses). Rows come from PasTreeIdePlugin.ResultRows: the snippet is
@@ -51,10 +52,28 @@ procedure ExecuteFindReferences(const AView: IOTAEditView);
 function IdentifierAt(const AFileName: string; ARow, ACol: Integer): string;
 
 /// <summary>
-/// Removes the "Find References" Messages tab. Call once (from
-/// PasTreeIdePlugin.Wizard's TIDEWizard.Destroy) so the group doesn't
-/// persist forever across package reinstalls - see the field comment on
-/// GMessageGroup in the implementation section for why this is hygiene,
+/// The Messages tab for one Find All search, named "<command>: <subject>"
+/// ("References: TFoo", "Overrides: Paint") - created on the first
+/// search for that subject and REUSED by the next one for it, while a search
+/// for anything else gets a tab of its own (Alex, 2026-11-19). The caller
+/// clears it before filling. Shared by the whole Find All family
+/// (PasTreeIdePlugin.FindHierarchy too), so one registry knows every tab
+/// these commands made - see GResultTabs.
+/// </summary>
+function GetOrCreateResultTab(const AMessageServices: IOTAMessageServices;
+  const ACommandName, ASubject: string): IOTAMessageGroup;
+
+/// <summary>
+/// Removes every tab GetOrCreateResultTab made that the IDE still has - not
+/// at IDE shutdown (see FinalizeFindReferencesMessageGroup) and silently.
+/// </summary>
+procedure RemoveResultTabs;
+
+/// <summary>
+/// Removes the Find All result tabs. Call once (from
+/// PasTreeIdePlugin.Wizard's TIDEWizard.Destroy) so the groups don't
+/// persist forever across package reinstalls - see the comment on
+/// GResultTabs in the implementation section for why this is hygiene,
 /// not something suspected of causing the reinstall AVs.
 /// </summary>
 procedure FinalizeFindReferencesMessageGroup;
@@ -87,16 +106,25 @@ uses
   PasTreeIdePlugin.Settings, PasTreeIdePlugin.RenameToolbar;
 
 const
-  cMessageGroupName = 'Find References';
+  // The tab's name before the subject: "References: TFoo" - no "Find" in
+  // front, which every tab of the family repeated (Alex, 2026-11-19).
+  cMessageGroupName = 'References';
 
 var
-  // Held so FinalizeFindReferencesMessageGroup can remove it on package
-  // unload - a plain data container (no code pointers back into us), so its
-  // leaking across a hot-reinstall was never itself a crash risk, just an
-  // orphaned IDE resource. Fixed for hygiene, not because it was suspected
-  // of causing the AVs - see PasTreeIdePlugin.GotoDeclaration's own header
-  // for that (unrelated) investigation.
-  GMessageGroup: IOTAMessageGroup;
+  { The captions of the tabs GetOrCreateResultTab made, kept so the package
+    can remove them on unload and on a project close. CAPTIONS, NOT
+    IOTAMessageGroup references: a tab the user closed is a group the IDE
+    has dropped, and a held reference keeps only its object alive -
+    ShowMessageView on it was an access violation in TTabSet.SetTabIndex
+    (Unused Units, Alex, 2026-10-06: close the tab, search again). So every
+    use looks the group up by caption first.
+
+    Removing them on unload is hygiene: a group is a plain data container (no
+    code pointers back into us), so its leaking across a hot-reinstall was
+    never itself a crash risk, just an orphaned IDE resource - see
+    PasTreeIdePlugin.GotoDeclaration's own header for that (unrelated)
+    investigation. }
+  GResultTabs: TArray<string>;
   { THE TEARDOWN GATE EVERY OTHER ASYNC FEATURE HAS, and the one this unit was
     missing (Rename, ClassComplete, CodeInsight, Outline, IdeInsight and
     BlockClose all check it first thing in an LSP callback).
@@ -105,34 +133,65 @@ var
     wizard runs BEFORE FinalizeLspSession, and the session's teardown fails
     every pending request synchronously. So a Find References in flight at
     unload lands here with the group already dropped: without the gate,
-    ReportHits called GetOrCreateMessageGroup, which RECREATED the tab and
+    ReportHits called GetOrCreateResultTab, which RECREATED the tab and
     filled it with TResultRow objects whose INTACustomDrawMessage vtables live
     in the BPL being unloaded. The next repaint of the Messages panel then
     calls Draw in code that is no longer mapped - the dangling-code AV this
     package has already been bitten by once. }
   GAlive: Boolean = True;
 
-function GetOrCreateMessageGroup(const AMessageServices: IOTAMessageServices): IOTAMessageGroup;
+{ SAME SUBJECT, SAME TAB; ANOTHER SUBJECT, ANOTHER TAB. The subject is the
+  name searched for, compared as Pascal compares names - case-insensitively,
+  so "tfoo" after "TFoo" is the same search - and the spelling of the first
+  search stays the tab's caption. Two different symbols spelled alike share
+  a tab, which is what the caption says anyway. A search with no name to
+  show (an empty subject) is the bare command's tab. }
+function GetOrCreateResultTab(const AMessageServices: IOTAMessageServices;
+  const ACommandName, ASubject: string): IOTAMessageGroup;
+var
+  LCaption, LKnown: string;
+  LFound: Boolean;
 begin
-  // Looked up every time: a tab the user closed is a group the IDE has
-  // dropped, and the reference held here keeps only its object alive -
-  // ShowMessageView on it was an access violation in TTabSet.SetTabIndex
-  // (Unused Units, Alex, 2026-10-06: close the tab, search again).
-  GMessageGroup := AMessageServices.GetGroup(cMessageGroupName);
-  if not Assigned(GMessageGroup) then
-    GMessageGroup := AMessageServices.AddMessageGroup(cMessageGroupName);
-  Result := GMessageGroup;
+  if ASubject = '' then
+    LCaption := ACommandName
+  else
+    LCaption := ACommandName + ': ' + ASubject;
+  LFound := False;
+  for LKnown in GResultTabs do
+    if SameText(LKnown, LCaption) then
+    begin
+      LCaption := LKnown;
+      LFound := True;
+      Break;
+    end;
+  if not LFound then
+    GResultTabs := GResultTabs + [LCaption];
+  // Looked up every time - see GResultTabs.
+  Result := AMessageServices.GetGroup(LCaption);
+  if not Assigned(Result) then
+    Result := AMessageServices.AddMessageGroup(LCaption);
 end;
 
-// Removes the tab only while the IDE still has it - one the user closed is
-// gone already, and the reference held here is not it (see above).
-procedure RemoveLiveGroup(const AMessageServices: IOTAMessageServices);
+{ Only the tabs the IDE still has - one the user closed is gone already.
+  NOT AT IDE SHUTDOWN, and silently: see FinalizeFindReferencesMessageGroup. }
+procedure RemoveResultTabs;
 var
+  LMessageServices: IOTAMessageServices;
+  LCaption: string;
   LGroup: IOTAMessageGroup;
 begin
-  LGroup := AMessageServices.GetGroup(cMessageGroupName);
-  if Assigned(LGroup) then
-    AMessageServices.RemoveMessageGroup(LGroup);
+  if (Length(GResultTabs) > 0) and not Application.Terminated and
+     Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
+    for LCaption in GResultTabs do
+      try
+        LGroup := LMessageServices.GetGroup(LCaption);
+        if Assigned(LGroup) then
+          LMessageServices.RemoveMessageGroup(LGroup);
+      except
+        // Cosmetic cleanup; a failure here must not become an error over a
+        // closing project or a package being unloaded.
+      end;
+  GResultTabs := nil;
 end;
 
 { NOT AT IDE SHUTDOWN - this is the AV of 2026-08-22 and 2026-08-24, finally
@@ -154,43 +213,24 @@ end;
   is the difference between a clean reinstall and a stale tab. Application is
   the IDE's own, and Terminated is set once its main form is closing.
 
-  The try/except is the belt to that braces, and deliberately silent: this runs
-  while the package is being unloaded, so there is no panel left to report to,
-  and an exception escaping a destructor here would take the IDE down over a
-  cosmetic cleanup. }
+  The try/except (in RemoveResultTabs) is the belt to that braces, and
+  deliberately silent: this runs while the package is being unloaded, so
+  there is no panel left to report to, and an exception escaping a destructor
+  here would take the IDE down over a cosmetic cleanup. }
 procedure FinalizeFindReferencesMessageGroup;
-var
-  LMessageServices: IOTAMessageServices;
 begin
   GAlive := False;   // see the declaration: callbacks stop here, not later
-  if Assigned(GMessageGroup) and not Application.Terminated and
-     Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
-    try
-      RemoveLiveGroup(LMessageServices);
-    except
-      // See above. The group is released either way by the line below.
-    end;
-  GMessageGroup := nil;
+  RemoveResultTabs;
 end;
 
 { The same removal, for a project close rather than a package unload - so it
   does NOT touch GAlive: the package goes on living and the next search must
-  work. GetOrCreateMessageGroup makes the group again when there is something
-  to put in it, which is also why removing beats clearing: an empty "Find
+  work. GetOrCreateResultTab makes a tab again when there is something to put
+  in it, which is also why removing beats clearing: an empty "Find
   References" tab left standing is a tab that says a search found nothing. }
 procedure CloseFindReferencesResults;
-var
-  LMessageServices: IOTAMessageServices;
 begin
-  if Assigned(GMessageGroup) and not Application.Terminated and
-     Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
-    try
-      RemoveLiveGroup(LMessageServices);
-    except
-      // Cosmetic cleanup on a path the user did not ask anything of: a
-      // failure here must not become an error over a closing project.
-    end;
-  GMessageGroup := nil;
+  RemoveResultTabs;
 end;
 
 /// <summary>
@@ -318,9 +358,10 @@ end;
 
 /// <summary>
 /// Reports the declaration site (if any) plus every found reference, grouped
-/// by file, in a dedicated "Find References" tab in the Messages panel
-/// (distinct from the Build tab, reused across searches - each call clears
-/// it first). Every row is an owner-drawn custom message from
+/// by file, in a "References: <name>" tab in the Messages panel
+/// (distinct from the Build tab, reused by the next search for the same name
+/// - each call clears it first - see GetOrCreateResultTab). Every row is an
+/// owner-drawn custom message from
 /// PasTreeIdePlugin.ResultRows: one navigable header per file (bold name +
 /// count, double-click opens the file - the AddToolMessage headers never
 /// could), one syntax-colored snippet per hit with the matched identifier
@@ -454,7 +495,8 @@ begin
   if not Supports(BorlandIDEServices, IOTAMessageServices, LMessageServices) then
     Exit;
 
-  LGroup := GetOrCreateMessageGroup(LMessageServices);
+  LGroup := GetOrCreateResultTab(LMessageServices, cMessageGroupName,
+    AIdentifier);
   LMessageServices.ClearMessageGroup(LGroup);
 
   // A custom row rather than AddTitleMessage: a title message is IDE-drawn
