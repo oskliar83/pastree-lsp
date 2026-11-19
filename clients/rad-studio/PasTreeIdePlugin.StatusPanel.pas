@@ -36,6 +36,21 @@ unit PasTreeIdePlugin.StatusPanel;
   reference), the bar's destruction is watched with FreeNotification, and
   FinalizeStatusPanel takes every panel back out: a panel left behind would
   outlive the package that knows what it says.
+
+  THE ERROR COUNT: "PasTree: Ready [3]" when the PROJECT answering the file
+  in front has errors - every unit its analysis compiles, open or not: the
+  server's pastree/diagnosticCounts (LspProjectDiagnosticCounts), not the
+  publishDiagnostics of the open files - and plain "PasTree: Ready" when it
+  has none; warnings and hints are not in the bracket (Alex, 2026-11-19).
+  Only beside Ready: while a run is shown the count is the previous run's.
+
+  THE HINT: "PasTree: Ready, 3 errors, 0 warnings, 12 hints" over our panel,
+  the same project's totals. A TStatusPanel has no hint of its own, only its bar
+  has one, so the bar's WindowProc is hooked (TBarHint) and answers
+  CM_HINTSHOW for our panel's rectangle alone; everywhere else the IDE's
+  answer stands, cut off at our panel so that crossing into it asks again.
+  The bar is made to show hints if it did not (and declines them outside our
+  panel in that case, as before); both are put back when the package goes.
 }
 
 interface
@@ -50,6 +65,9 @@ uses
   System.Classes,
   System.Generics.Collections,
   Winapi.Windows,
+  Winapi.Messages,
+  Winapi.CommCtrl,
+  Vcl.Controls,
   Vcl.ComCtrls,
   Vcl.ExtCtrls,
   Vcl.Forms,
@@ -69,6 +87,26 @@ const
   cPrefix = ' PasTree: ';
 
 type
+  /// The hint of our panel in one status bar - see THE HINT in the header.
+  TBarHint = class
+  private
+    FBar: TStatusBar;
+    FOldProc: TWndMethod;
+    // What the bar's ShowHint / ParentShowHint were before we turned
+    // ShowHint on.
+    FShowedHints: Boolean;
+    FParentShowHint: Boolean;
+    function PanelRect(out ARect: TRect): Boolean;
+    procedure WndProc(var AMessage: TMessage);
+  public
+    PanelId: Integer;
+    Text: string;
+    constructor Create(ABar: TStatusBar);
+    destructor Destroy; override;
+    /// The bar is being freed: nothing to restore.
+    procedure Forget;
+  end;
+
   TStatusPanels = class(TComponent)
   private
     FTimer: TTimer;
@@ -76,11 +114,13 @@ type
     FPanels: TDictionary<TStatusBar, Integer>;
     // Edit window form -> the file EditorViewActivated last reported there.
     FFiles: TDictionary<TCustomForm, string>;
+    // Status bar -> the hook that answers our panel's hint. Owned.
+    FHints: TObjectDictionary<TStatusBar, TBarHint>;
     FDots: Integer;
     FLogged: Boolean;
     procedure OnTimer(Sender: TObject);
     function PanelOf(ABar: TStatusBar): TStatusPanel;
-    function TextFor(const AFileName: string): string;
+    procedure Describe(const AFileName: string; out AText, AHint: string);
     procedure LogLayout(ABar: TStatusBar);
   protected
     procedure Notification(AComponent: TComponent;
@@ -117,6 +157,108 @@ var
   GPanels: TStatusPanels;
   GNotifierIndex: Integer = -1;
 
+{ TBarHint }
+
+constructor TBarHint.Create(ABar: TStatusBar);
+begin
+  inherited Create;
+  FBar := ABar;
+  FShowedHints := ABar.ShowHint;
+  FParentShowHint := ABar.ParentShowHint;
+  FOldProc := ABar.WindowProc;
+  ABar.WindowProc := WndProc;
+  if not FShowedHints then
+    ABar.ShowHint := True;
+end;
+
+destructor TBarHint.Destroy;
+var
+  LMine: TWndMethod;
+begin
+  if FBar <> nil then
+  begin
+    LMine := WndProc;
+    // Restored only while the chain still ends in us - someone who hooked
+    // after us holds our method as their old one (same rule as
+    // PasTreeIdePlugin.EditorWindowHook).
+    if (TMethod(FBar.WindowProc).Code = TMethod(LMine).Code) and
+       (TMethod(FBar.WindowProc).Data = TMethod(LMine).Data) then
+      FBar.WindowProc := FOldProc
+    else
+      TimingLog('status panel: the status bar''s WindowProc was hooked ' +
+        'after ours - left as it is');
+    if not FShowedHints then
+      if FParentShowHint then
+        FBar.ParentShowHint := True
+      else
+        FBar.ShowHint := False;
+  end;
+  inherited;
+end;
+
+procedure TBarHint.Forget;
+begin
+  FBar := nil;
+end;
+
+function TBarHint.PanelRect(out ARect: TRect): Boolean;
+var
+  LItem: TCollectionItem;
+begin
+  Result := False;
+  if (FBar = nil) or FBar.SimplePanel or not FBar.HandleAllocated then
+    Exit;
+  LItem := FBar.Panels.FindItemID(PanelId);
+  if LItem = nil then
+    Exit;
+  Result := SendMessage(FBar.Handle, SB_GETRECT, LItem.Index,
+    LPARAM(@ARect)) <> 0;
+end;
+
+procedure TBarHint.WndProc(var AMessage: TMessage);
+var
+  // Qualified: Vcl.Forms, later in the uses clause, has a deprecated alias.
+  LInfo: Vcl.Controls.PHintInfo;
+  LRect: TRect;
+  LHas: Boolean;
+begin
+  if (AMessage.Msg <> CM_HINTSHOW) or (AMessage.LParam = 0) then
+  begin
+    FOldProc(AMessage);
+    Exit;
+  end;
+  LInfo := Vcl.Controls.PHintInfo(AMessage.LParam);
+  LHas := PanelRect(LRect);
+  if LHas and (Text <> '') and LRect.Contains(LInfo.CursorPos) then
+  begin
+    LInfo.HintStr := Text;
+    // The hint lives while the mouse stays in the panel; leaving it asks
+    // the bar again.
+    LInfo.CursorRect := LRect;
+    AMessage.Result := 0;
+    Exit;
+  end;
+  FOldProc(AMessage);
+  // A bar that showed no hints before us still shows none outside our panel.
+  if not FShowedHints then
+    AMessage.Result := 1
+  else if LHas then
+  begin
+    // The IDE's hint covers the whole bar by default: cut it off at our
+    // panel, or moving into the panel would not ask again.
+    if LInfo.CursorPos.X < LRect.Left then
+    begin
+      if LInfo.CursorRect.Right > LRect.Left then
+        LInfo.CursorRect.Right := LRect.Left;
+    end
+    else if LInfo.CursorPos.X >= LRect.Right then
+    begin
+      if LInfo.CursorRect.Left < LRect.Right then
+        LInfo.CursorRect.Left := LRect.Right;
+    end;
+  end;
+end;
+
 { TStatusPanels }
 
 constructor TStatusPanels.Create(AOwner: TComponent);
@@ -124,6 +266,7 @@ begin
   inherited Create(AOwner);
   FPanels := TDictionary<TStatusBar, Integer>.Create;
   FFiles := TDictionary<TCustomForm, string>.Create;
+  FHints := TObjectDictionary<TStatusBar, TBarHint>.Create([doOwnsValues]);
   FTimer := TTimer.Create(Self);
   FTimer.Interval := cTickMs;
   FTimer.OnTimer := OnTimer;
@@ -136,6 +279,8 @@ var
   LForm: TCustomForm;
 begin
   FTimer.Enabled := False;
+  // First: each hook puts its bar's WindowProc and ShowHint back.
+  FreeAndNil(FHints);
   for LBar in FPanels.Keys do
   begin
     LItem := LBar.Panels.FindItemID(FPanels[LBar]);
@@ -154,10 +299,18 @@ end;
 
 procedure TStatusPanels.Notification(AComponent: TComponent;
   Operation: TOperation);
+var
+  LHint: TBarHint;
 begin
   inherited;
   if Operation <> opRemove then
     Exit;
+  if (FHints <> nil) and (AComponent is TStatusBar) and
+     FHints.TryGetValue(TStatusBar(AComponent), LHint) then
+  begin
+    LHint.Forget;
+    FHints.Remove(TStatusBar(AComponent));
+  end;
   if (FPanels <> nil) and (AComponent is TStatusBar) then
     FPanels.Remove(TStatusBar(AComponent));
   if (FFiles <> nil) and (AComponent is TCustomForm) then
@@ -229,45 +382,84 @@ begin
   TimingLog(LText);
 end;
 
-function TStatusPanels.TextFor(const AFileName: string): string;
+{ AText is the panel's text, AHint the hint over it; both '' when no server
+  answers the file. }
+procedure TStatusPanels.Describe(const AFileName: string;
+  out AText, AHint: string);
 var
   LRunningMs: UInt64;
-  LDots, LMessage: string;
+  LMessage, LState: string;
+  LErrors, LWarnings, LHints: Integer;
+  LBusy, LCounted: Boolean;
+
+  function Counted(ACount: Integer; const AWhat: string): string;
+  begin
+    Result := Format('%d %s', [ACount, AWhat]);
+    if ACount <> 1 then
+      Result := Result + 's';
+  end;
+
 begin
-  LDots := StringOfChar('.', FDots + 1);
+  AText := '';
+  AHint := '';
+  LBusy := False;
+  LCounted := True;
   case LspServerStatusFor(AFileName, LRunningMs, LMessage) of
     lssStarting:
-      Result := cPrefix + 'Starting' + LDots;
+      begin
+        LState := 'Starting';
+        LBusy := True;
+        LCounted := False;
+      end;
     lssReady:
-      Result := cPrefix + 'Ready';
+      LState := 'Ready';
     lssIncremental:
-      if LRunningMs < cBusyAfterMs then
-        Result := cPrefix + 'Ready'
-      else
-        Result := cPrefix + 'analyzing (inc)' + LDots;
+      begin
+        LState := 'analyzing (inc)';
+        LBusy := True;
+      end;
     lssFull:
-      if LRunningMs < cBusyAfterMs then
-        Result := cPrefix + 'Ready'
-      else
-        Result := cPrefix + 'analyzing' + LDots;
+      begin
+        LState := 'analyzing';
+        LBusy := True;
+      end;
     lssLibrary:
       begin
         // A Find, a rename or the uses lint waiting while the server makes
         // the library bodies it needs full (light mode). Its wait dialog -
         // the command's own progress surface - gets the server's line under
         // the description; a no-op when no dialog of ours is up.
-        if LRunningMs < cBusyAfterMs then
-          Result := cPrefix + 'Ready'
-        else
-          Result := cPrefix + 'library bodies' + LDots;
+        LState := 'library bodies';
+        LBusy := True;
         if LMessage <> '' then
           UpdateWaitDialogWork('PasTree: ' + LMessage);
       end;
     lssFailed:
-      Result := cPrefix + 'Stopped';
+      begin
+        LState := 'Stopped';
+        LCounted := False;
+      end;
   else
-    Result := '';   // no server for this file: say nothing
+    Exit;   // no server for this file: say nothing
   end;
+  // A run shorter than cBusyAfterMs is not shown - see the header.
+  if LBusy and LCounted and (LRunningMs < cBusyAfterMs) then
+  begin
+    LState := 'Ready';
+    LBusy := False;
+  end;
+  AText := cPrefix + LState;
+  AHint := 'PasTree: ' + LState;
+  if LBusy then
+    AText := AText + StringOfChar('.', FDots + 1);
+  if not LCounted then
+    Exit;
+  // Nothing reported yet reads as none: the hint says 0.
+  LspProjectDiagnosticCounts(AFileName, LErrors, LWarnings, LHints);
+  if (LErrors > 0) and not LBusy then
+    AText := AText + Format(' [%d]', [LErrors]);
+  AHint := AHint + ', ' + Counted(LErrors, 'error') + ', ' +
+    Counted(LWarnings, 'warning') + ', ' + Counted(LHints, 'hint');
 end;
 
 procedure TStatusPanels.OnTimer(Sender: TObject);
@@ -278,7 +470,8 @@ var
   LBar: TStatusBar;
   LPanel: TStatusPanel;
   LIdx: Integer;
-  LFile, LText: string;
+  LFile, LText, LHintText: string;
+  LHint: TBarHint;
 begin
   FDots := (FDots + 1) mod 3;
   if not Supports(BorlandIDEServices, INTAEditorServices, LServices) then
@@ -306,11 +499,19 @@ begin
           LFile := LEditor.TopView.Buffer.FileName;
       end;
       LText := '';
+      LHintText := '';
       if LFile <> '' then
-        LText := TextFor(LFile);
+        Describe(LFile, LText, LHintText);
       LPanel := PanelOf(LBar);
       if LPanel.Text <> LText then
         LPanel.Text := LText;
+      if not FHints.TryGetValue(LBar, LHint) then
+      begin
+        LHint := TBarHint.Create(LBar);
+        FHints.Add(LBar, LHint);
+      end;
+      LHint.PanelId := LPanel.ID;
+      LHint.Text := LHintText;
     end;
   except
     on E: Exception do

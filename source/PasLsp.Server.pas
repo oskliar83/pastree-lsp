@@ -60,6 +60,10 @@ unit PasLsp.Server;
                   file of the closure, so a client running one server per
                   project can route a file to a project that compiles it
                   (PublishClosure). False (the default) sends nothing
+    "diagnosticCounts" - True sends pastree/diagnosticCounts whenever the
+                  closure's totals of errors, warnings and hints differ from
+                  the last ones sent (PublishDiagnosticCounts). False (the
+                  default) sends nothing
   A .dproj brings its own MainSource/search paths/defines/namespaces/aliases
   (TPasDProj - the same MSBuild evaluation the CLI tools use). Without a
   projectFile the open documents themselves become the analysis roots.
@@ -267,6 +271,10 @@ type
     // pastree/closure - see PublishClosure.
     FClosureNotify: Boolean;
     FClosureSent: string;
+    // The "diagnosticCounts" option (default False) and the params last sent
+    // in pastree/diagnosticCounts - see PublishDiagnosticCounts.
+    FCountsNotify: Boolean;
+    FCountsSent: string;
     // THE WORKSPACE ESCALATED (PasTree's decision D9): a query found a full
     // analysis cheaper than the library bodies it needed and rebuilt the
     // project in full. The session stays full from then on - FLightPaths is
@@ -541,6 +549,7 @@ type
     function IncluderMids(const APath: string): TArray<Integer>;
     procedure RefreshIncluders;
     procedure PublishClosure;
+    procedure PublishDiagnosticCounts;
     function IsInclude(const APath: string): Boolean;
     function ModuleIncludeNote: string;
     function DiskNewerThanAnalysis(const APath: string): Boolean;
@@ -1261,6 +1270,7 @@ begin
     FUndeclaredBehindMissing :=
       AOptions.GetValue<Boolean>('undeclaredBehindMissingUnits', False);
     FClosureNotify := AOptions.GetValue<Boolean>('closure', False);
+    FCountsNotify := AOptions.GetValue<Boolean>('diagnosticCounts', False);
   end;
   // The formatter's style: the `formatting` member, absent = the library's
   // default. Logged by ApplyFormatConfig once the log path is known - below.
@@ -3916,6 +3926,48 @@ var
 begin
   for LDoc in FDocs.All do
     PublishDiagnosticsFor(LDoc);
+  PublishDiagnosticCounts;
+end;
+
+(* pastree/diagnosticCounts - OURS (0.94.3), sent only to a client that asked
+  with the "diagnosticCounts" option. How many diagnostics the WHOLE closure
+  holds, open or not, by the severity publishDiagnostics gives each
+  (DiagSeverity) - the object's braces left out of this comment:
+    "errors": 2, "warnings": 0, "hints": 5
+  publishDiagnostics covers the open documents alone, and a status line
+  saying "no errors" over an F1027 in a unit nobody has open would be wrong
+  about the one thing it is for. The same diagnostics the parse record logs,
+  counted the same way: one an $I include raises is counted once per unit
+  including it. Sent with every publish whose totals differ from the last
+  ones sent - the walk is a Length per model, nothing per keystroke worth
+  measuring. *)
+procedure TLspServer.PublishDiagnosticCounts;
+var
+  LMid, LIdx: Integer;
+  LModel: TPasSemaModel;
+  LCounts: array[1..3] of Integer;
+  LParams: string;
+begin
+  if not FCountsNotify or (FProject = nil) then
+    Exit;
+  LCounts[1] := 0;
+  LCounts[2] := 0;
+  LCounts[3] := 0;
+  for LMid := 0 to FProject.ModelCount - 1 do
+  begin
+    LModel := FProject.Model(LMid);
+    if LModel = nil then
+      Continue;
+    for LIdx := 0 to High(LModel.Diags) do
+      Inc(LCounts[DiagSeverity(LModel.Diags[LIdx].Code)]);
+  end;
+  LParams := Format('{"errors":%d,"warnings":%d,"hints":%d}',
+    [LCounts[1], LCounts[2], LCounts[3]]);
+  if LParams = FCountsSent then
+    Exit;
+  FCountsSent := LParams;
+  Notify('{"jsonrpc":"2.0","method":"pastree/diagnosticCounts","params":' +
+    LParams + '}');
 end;
 
 { One open document's share of the above. Also called by didOpen for a

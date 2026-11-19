@@ -885,6 +885,16 @@ function LspServerStatusFor(const AFileName: string;
   out ARunningMs: UInt64; out AMessage: string): TLspServerStatus; overload;
 
 /// <summary>
+/// The diagnostics of the WHOLE project that answers AFileName - every unit
+/// its analysis compiles, open in the editor or not - by severity: the
+/// server's last pastree/diagnosticCounts. All 0 until the first analysis
+/// has reported; False with no session. Routed like LspServerStatusFor and
+/// asked on the same timer, so it never starts a server.
+/// </summary>
+function LspProjectDiagnosticCounts(const AFileName: string;
+  out AErrors, AWarnings, AHints: Integer): Boolean;
+
+/// <summary>
 /// Which Find All commands apply at the caret - SYNCHRONOUS, and the only
 /// synchronous question this unit asks. The editor's local menu is built on
 /// the main thread and its OnUpdate runs before it is drawn, so a verdict
@@ -1754,8 +1764,14 @@ type
     // one arrives; kept across a server restart, which sends its own once
     // its analysis lands. Routing asks it (TLspSessionPool.OwningProjectFile).
     FClosure: TDictionary<string, Boolean>;
+    // The server's last pastree/diagnosticCounts: the whole closure's
+    // totals, open files or not. All 0 until the first one arrives.
+    FErrorCount: Integer;
+    FWarningCount: Integer;
+    FHintCount: Integer;
     FDestroying: Boolean;
     procedure StoreClosure(AParams: TJSONValue);
+    procedure StoreDiagnosticCounts(AParams: TJSONValue);
     function BuildOptions(const AProject: IOTAProject;
       out APlatform, AConfig: string): TLspInitOptions;
     function EnsureSession: Boolean;
@@ -2499,6 +2515,15 @@ begin
     GPool.InvalidateRoutes;
 end;
 
+procedure TLspSession.StoreDiagnosticCounts(AParams: TJSONValue);
+begin
+  if AParams = nil then
+    Exit;
+  FErrorCount := AParams.GetValue<Integer>('errors', 0);
+  FWarningCount := AParams.GetValue<Integer>('warnings', 0);
+  FHintCount := AParams.GetValue<Integer>('hints', 0);
+end;
+
 { publishDiagnostics params -> the per-file cache: uri, then per diagnostic
   range.start/end (LSP 0-based) and severity/message. Diagnostics never span
   lines in this server (PasLsp.Server.PublishDiagnosticsFor: an identifier's
@@ -3076,6 +3101,8 @@ begin
   // The files the analysis compiles, which routing asks first (see
   // TLspSessionPool.OwningProjectFile).
   Result.Closure := True;
+  // The project's diagnostic totals, for the status panel.
+  Result.DiagnosticCounts := True;
   // The formatter's style, for the .dcu text the analysis reads (the
   // server's DcuTextFilter). Not a restart reason: a format request carries
   // the style itself, and the .dcu text follows at the next server start.
@@ -3250,6 +3277,11 @@ begin
         if AMethod = 'pastree/closure' then
         begin
           StoreClosure(AParams);
+          Exit;
+        end;
+        if AMethod = 'pastree/diagnosticCounts' then
+        begin
+          StoreDiagnosticCounts(AParams);
           Exit;
         end;
         // What the server says to the user - a configuration it could not
@@ -7008,6 +7040,26 @@ begin
   end;
   ARunningMs := GetTickCount64 - LClient.ActivitySince;
   AMessage := LClient.ActivityMessage;
+end;
+
+function LspProjectDiagnosticCounts(const AFileName: string;
+  out AErrors, AWarnings, AHints: Integer): Boolean;
+var
+  LSession: TLspSession;
+begin
+  AErrors := 0;
+  AWarnings := 0;
+  AHints := 0;
+  Result := False;
+  if not Assigned(GPool) then
+    Exit;
+  LSession := GPool.SessionForFile(AFileName, False);
+  if LSession = nil then
+    Exit;
+  AErrors := LSession.FErrorCount;
+  AWarnings := LSession.FWarningCount;
+  AHints := LSession.FHintCount;
+  Result := True;
 end;
 
 function LspBenchmark(AThreads: Integer; ALight: Boolean;

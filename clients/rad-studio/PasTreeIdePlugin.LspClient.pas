@@ -155,6 +155,13 @@ type
     /// </summary>
     Closure: Boolean;
     /// <summary>
+    /// Sent as diagnosticCounts=true: the server sends
+    /// pastree/diagnosticCounts - the whole closure's errors, warnings and
+    /// hints - whenever they change. The status panel shows them; False sends
+    /// nothing, the server's default.
+    /// </summary>
+    DiagnosticCounts: Boolean;
+    /// <summary>
     /// Sent as "formatting" when not empty: the formatter's style as a JSON
     /// object text (PasTreeIdePlugin.FormatText.FormatRequestOptions) - what
     /// the server puts a .dcu's generated text through (FormatDcuText).
@@ -642,6 +649,8 @@ begin
     LResult.AddPair('undeclaredBehindMissingUnits', TJSONBool.Create(True));
   if Closure then
     LResult.AddPair('closure', TJSONBool.Create(True));
+  if DiagnosticCounts then
+    LResult.AddPair('diagnosticCounts', TJSONBool.Create(True));
   if Formatting <> '' then
   begin
     LFormatting := TJSONObject.ParseJSONValue(Formatting);

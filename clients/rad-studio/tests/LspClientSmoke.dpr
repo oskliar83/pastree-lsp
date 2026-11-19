@@ -61,6 +61,12 @@ var
   // section 5c-bis's evidence.
   GClosure: string;
   GClosureCount: Integer;
+  // The last pastree/diagnosticCounts params (-1 until one arrives) and how
+  // many arrived - section 5c-ter's evidence.
+  GErrorCount: Integer = -1;
+  GWarningCount: Integer = -1;
+  GHintCount: Integer = -1;
+  GCountsCount: Integer;
 
 procedure Check(ACondition: Boolean; const AWhat: string);
 begin
@@ -402,6 +408,8 @@ begin
   LOptions.SearchPaths := [GFixtureDir, TPath.Combine(GFixtureDir, 'dcu32')];
   // As the package asks: pastree/closure after an analysis (section 5c-bis).
   LOptions.Closure := True;
+  // And pastree/diagnosticCounts (section 5c-ter).
+  LOptions.DiagnosticCounts := True;
   Result := GClient.Start(LOptions);
 end;
 
@@ -6429,6 +6437,61 @@ begin
     'the document went back to its on-disk text');
 end;
 
+{ 5c-ter. pastree/diagnosticCounts (0.94.3): the closure's errors, warnings
+  and hints, which the package's status panel shows - publishDiagnostics
+  covers the open documents alone. Pinned: it arrives with all three members,
+  an undeclared name typed into a unit raises the errors, an edit that changes
+  no total does not send it again, and undoing the edit brings the errors
+  back. }
+procedure TestDiagnosticCounts;
+var
+  LUnitFile, LDiskText, LEdited: string;
+  LLine, LChar, LErrors, LCount: Integer;
+begin
+  Writeln;
+  Writeln('=== 5c-ter. pastree/diagnosticCounts: the closure''s totals ===');
+  LUnitFile := TPath.Combine(GFixtureDir, 'DemoUnit.pas');
+  FindPos(LUnitFile, 'function Greet', 'Greet', LLine, LChar);
+  Check(Ask('textDocument/definition', PositionParams(LUnitFile, LLine, LChar)),
+    'an analysis is in place');
+  Check(PumpUntil(function: Boolean begin Result := GCountsCount > 0 end,
+    5000), Format('pastree/diagnosticCounts arrived (%d time(s))',
+      [GCountsCount]));
+  Writeln(Format('  -- errors %d, warnings %d, hints %d',
+    [GErrorCount, GWarningCount, GHintCount]));
+  Check((GErrorCount >= 0) and (GWarningCount >= 0) and (GHintCount >= 0),
+    'with errors, warnings and hints');
+  LErrors := GErrorCount;
+
+  LDiskText := TFile.ReadAllText(LUnitFile);
+  LEdited := StringReplace(LDiskText, 'Result := ''Hello, ''',
+    'Result := CountsSmokeUndeclared + ''Hello, ''', []);
+  Check(LEdited <> LDiskText, 'fixture patch applied (an undeclared name)');
+  SendDidChange(LUnitFile, LEdited);
+  Check(Ask('textDocument/definition', PositionParams(LUnitFile, LLine, LChar)),
+    'the edit was analyzed');
+  Check(PumpUntil(function: Boolean begin Result := GErrorCount > LErrors end,
+    5000), Format('the undeclared name raised the errors (%d -> %d)',
+      [LErrors, GErrorCount]));
+
+  // A comment beside it: an analysis runs, the totals stay.
+  LCount := GCountsCount;
+  SendDidChange(LUnitFile, StringReplace(LEdited, 'Result := Counts',
+    '// counts smoke'#13#10'  Result := Counts', []));
+  Check(Ask('textDocument/definition', PositionParams(LUnitFile, LLine, LChar)),
+    'a second edit was analyzed');
+  PumpUntil(function: Boolean begin Result := False end, 300);
+  Check(GCountsCount = LCount,
+    Format('and the unchanged totals were not sent again (%d -> %d)',
+      [LCount, GCountsCount]));
+
+  SendDidChange(LUnitFile, LDiskText);
+  Check(Ask('textDocument/definition', PositionParams(LUnitFile, LLine, LChar)),
+    'the document went back to its on-disk text');
+  Check(PumpUntil(function: Boolean begin Result := GErrorCount = LErrors end,
+    5000), Format('and the errors with it (%d)', [GErrorCount]));
+end;
+
 procedure TestRestartOnConfigChange(const AExe: string);
 var
   LOldPid, LNewPid: DWORD;
@@ -6590,6 +6653,13 @@ begin
             GClosure := AParams.ToJSON;
             Inc(GClosureCount);
           end;
+          if (AMethod = 'pastree/diagnosticCounts') and Assigned(AParams) then
+          begin
+            GErrorCount := AParams.GetValue<Integer>('errors', -1);
+            GWarningCount := AParams.GetValue<Integer>('warnings', -1);
+            GHintCount := AParams.GetValue<Integer>('hints', -1);
+            Inc(GCountsCount);
+          end;
         end;
       // The seam the real document layer uses: a restarted server starts with
       // no open documents, so they are re-sent on every handshake.
@@ -6612,6 +6682,7 @@ begin
       TestOverlayBeatsDisk;
       TestIncrementalPath;
       TestClosure;
+      TestDiagnosticCounts;
       TestCompletion;
       TestCompletionGenericDetail;
       TestCompletionExpected;
