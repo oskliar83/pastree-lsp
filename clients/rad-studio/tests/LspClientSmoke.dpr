@@ -787,6 +787,37 @@ begin
   Check(GOk and GResultJson.Contains('DemoDcu.pas'),
     'and finds the importer''s uses of the type');
 
+  // A unit inside a .dcp (PasTree 0.212.0): its path names a member of the
+  // package, `<dir>\designide.dcp\ComponentDesigner.dcu`, which no file on
+  // disk has - the answer is its text all the same, not "the file does not
+  // exist" (0.94.2). The installed Studio's own package; skipped without one.
+  LBogus := TPath.Combine(GetEnvironmentVariable('BDS'),
+    'lib\win32\release\designide.dcp');
+  if (GetEnvironmentVariable('BDS') <> '') and TFile.Exists(LBogus) then
+  begin
+    LBogus := TPath.Combine(LBogus, 'ComponentDesigner.dcu');
+    Check(Ask('pastree/dcuSource',
+      TJSONObject.Create.AddPair('textDocument',
+        TJSONObject.Create.AddPair('uri', PathToLspUri(LBogus)))),
+      'pastree/dcuSource on a unit inside designide.dcp answered: ' + GError);
+    LText := '';
+    if GOk then
+    begin
+      LRoot := TJSONObject.ParseJSONValue(GResultJson);
+      try
+        if LRoot is TJSONObject then
+          LText := LRoot.GetValue<string>('text', '');
+      finally
+        LRoot.Free;
+      end;
+    end;
+    Check(LText.Contains('unit ComponentDesigner;') and
+      not LText.Contains('__PasTreeUnresolved'),
+      'with its generated text, every type resolved');
+  end
+  else
+    Writeln('  (skipped: no $(BDS)\lib\win32\release\designide.dcp)');
+
   // Not a .dcu of any compiler: the answer is an error that says so.
   LBogus := TPath.Combine(TPath.GetTempPath, 'PasTreeSmokeBogus.dcu');
   TFile.WriteAllBytes(LBogus, TBytes.Create(0, 1, 2, 3, 4, 5, 6, 7, 8, 9,

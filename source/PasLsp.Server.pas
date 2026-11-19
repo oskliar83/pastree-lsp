@@ -83,6 +83,7 @@ uses
   PasTree.Platforms,
   PasTree.DProj,
   PasTree.SourceManager,
+  PasTree.Dcp,
   PasTree.Types,
   PasTree.Preprocessor,
   PasTree.Ast,
@@ -6682,7 +6683,11 @@ begin
   if not TPasSourceManager.IsDcuPath(LPath) then
     Exit(BuildError(AMsg.IdJson, LSP_INVALID_PARAMS,
       'dcuSource: not a .dcu path: ' + LPath));
-  if not TFile.Exists(LPath) then
+  // DcuPathExists, not TFile.Exists: a unit inside a .dcp is addressed
+  // `<dir>\pkg.dcp\Unit.dcu` (PasTree 0.212.0), a path no file has - every
+  // click into designide.dcp's ComponentDesigner answered "the file does
+  // not exist".
+  if not DcuPathExists(LPath) then
   begin
     LogCommand('pastree/dcuSource', 'no such file: ' + LPath);
     Exit(BuildError(AMsg.IdJson, LSP_REQUEST_FAILED,
