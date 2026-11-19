@@ -1018,6 +1018,20 @@ begin
       ASpots[LIdx].Col := SiteCol(APlan, LIdx, adBackward);
       ASpots[LIdx].State := ssPending;
     end
+    else if AFiles.TryGetValue(LowerCase(LEdit.FilePath), LFile) and
+       LFile.OnDisk then
+    begin
+      // Not open in the IDE: what was read is the file itself, so the
+      // analysis holds an older version of it - written outside the IDE
+      // after the analysis read it. "The buffer" named a thing the file
+      // does not have (2026-11-19).
+      AError := Format('%s line %d no longer reads "%s" - the file was ' +
+        'changed on disk, outside the IDE, after the analysis read it.' +
+        #13#10#13#10'Nothing was renamed. Open the file in the IDE (or ' +
+        'restart the IDE) and try again.',
+        [ExtractFileName(LEdit.FilePath), LEdit.Row, LEdit.OldText]);
+      Exit;
+    end
     else
     begin
       AError := Format('%s line %d no longer reads "%s" - the buffer has ' +

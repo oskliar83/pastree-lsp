@@ -98,7 +98,8 @@ for `analysis started:`:
 - `full rebuild` on a single-file edit - the server never offered the fast
   path. That decision is `ChangedDocs`, and the cause is always the same
   shape: something made the inputs look like more than one changed document -
-  or a file moved on disk (`changed on disk ... rebuild scheduled`, `watched:`),
+  or a file moved on disk (`changed on disk ... rebuild scheduled`, `watched:`,
+  `disk watch:` - the server's own watcher since 0.95.0),
   which the module path must not paper over.
 - A NEW UNIT (File > New > Unit, Save As) is an incremental run of its
   program since 0.55.0: `analysis done (incremental)` with

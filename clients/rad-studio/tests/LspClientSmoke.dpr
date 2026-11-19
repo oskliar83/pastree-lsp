@@ -5986,6 +5986,157 @@ begin
     end, 5000);
 end;
 
+// A server log as it is now - read shared, the server appends to it.
+function ReadLogFile(const ALog: string): string;
+var
+  LStream: TFileStream;
+  LBytes: TBytes;
+begin
+  Result := '';
+  if not TFile.Exists(ALog) then
+    Exit;
+  LStream := TFileStream.Create(ALog, fmOpenRead or fmShareDenyNone);
+  try
+    SetLength(LBytes, LStream.Size);
+    if Length(LBytes) > 0 then
+      LStream.ReadBuffer(LBytes[0], Length(LBytes));
+    Result := TEncoding.UTF8.GetString(LBytes);
+  finally
+    LStream.Free;
+  end;
+end;
+
+{ 5w. THE SERVER WATCHES THE DISK ITSELF (0.95.0). A unit no editor holds,
+  rewritten on disk with nothing said to the server - git, another editor,
+  an agent - used to stay in the analysis as it was first read: a rename
+  then refused to write ("line 3914 no longer reads ...", 2026-11-19). Two
+  lines inserted above DFoo must move what definition answers by two,
+  with no didChangeWatchedFiles sent. Then the same write reported by the
+  client too, as the IDE reports a reload: acted on once, the second report
+  dropped by its stamp, no second rebuild. A scratch project, its own
+  server and log. }
+procedure TestDiskWatch(const AExe: string);
+var
+  LDir, LLog, LMain, LUnit, LText: string;
+  LSaved, LOwn: TLspClient;
+  LOptions: TLspInitOptions;
+  LLine, LChar, LRebuilds: Integer;
+  LMoved: Boolean;
+
+  function CountOf(const AText, AWhat: string): Integer;
+  begin
+    Result := (Length(AText) - Length(AText.Replace(AWhat, ''))) div
+      Length(AWhat);
+  end;
+
+  // The line definition answers for the call of DFoo in the program.
+  function DefinitionLine: Integer;
+  var
+    LValue: TJSONValue;
+  begin
+    Result := -1;
+    if not Ask('textDocument/definition', PositionParams(LMain, LLine,
+      LChar)) or not GOk then
+      Exit;
+    LValue := TJSONObject.ParseJSONValue(GResultJson);
+    try
+      if LValue is TJSONArray then
+      begin
+        if TJSONArray(LValue).Count > 0 then
+          Result := TJSONArray(LValue).Items[0].GetValue<Integer>(
+            'range.start.line', -1);
+      end
+      else if LValue <> nil then
+        Result := LValue.GetValue<Integer>('range.start.line', -1);
+    finally
+      LValue.Free;
+    end;
+  end;
+
+  procedure SendDidChangeWatched(const AFile: string);
+  var
+    LParams, LItem: TJSONObject;
+    LChanges: TJSONArray;
+  begin
+    LItem := TJSONObject.Create;
+    LItem.AddPair('uri', PathToLspUri(AFile));
+    LItem.AddPair('type', TJSONNumber.Create(2));   // Changed
+    LChanges := TJSONArray.Create;
+    LChanges.Add(LItem);
+    LParams := TJSONObject.Create;
+    LParams.AddPair('changes', LChanges);
+    GClient.Notify('workspace/didChangeWatchedFiles', LParams);
+  end;
+
+begin
+  Writeln;
+  Writeln('=== 5w. a unit rewritten on disk, nothing told: the server sees it ===');
+  LDir := TPath.Combine(TPath.GetTempPath,
+    'pastree-diskwatch-' + IntToStr(GetCurrentProcessId));
+  if TDirectory.Exists(LDir) then
+    TDirectory.Delete(LDir, True);
+  TDirectory.CreateDirectory(LDir);
+  LLog := TPath.Combine(LDir, 'server.log');
+  LMain := TPath.Combine(LDir, 'DMain.dpr');
+  LUnit := TPath.Combine(LDir, 'DUnit.pas');
+  LText := 'program DMain;'#13#10'uses DUnit;'#13#10'begin'#13#10 +
+    '  DFoo;'#13#10'end.'#13#10;
+  TFile.WriteAllText(LMain, LText);
+  TFile.WriteAllText(LUnit, 'unit DUnit;'#13#10'interface'#13#10 +
+    'procedure DFoo;'#13#10'implementation'#13#10 +
+    'procedure DFoo; begin end;'#13#10'end.'#13#10);
+  FindPosInText(LText, '  DFoo;', 'DFoo', LLine, LChar);
+
+  LSaved := GClient;
+  LOwn := TLspClient.Create(AExe, ExtractFilePath(AExe),
+    procedure(const AText: string)
+    begin
+      Writeln('  [log] ' + AText);
+    end);
+  GClient := LOwn;
+  try
+    LOptions := Default(TLspInitOptions);
+    LOptions.ProjectFile := LMain;
+    LOptions.Platform := 'Win32';
+    LOptions.SearchPaths := [LDir];
+    LOptions.LogFile := LLog;
+    Check(LOwn.Start(LOptions), 'a server for the scratch project');
+    // definition goes on to the implementation: line 6 (0-based 5).
+    Check(DefinitionLine = 5, 'before: DFoo is implemented on line 6');
+    Check(PumpUntil(function: Boolean
+      begin
+        Result := ReadLogFile(LLog).Contains(' director(ies)');
+      end, 5000), 'the server watches the project''s directory');
+
+    // Rewritten behind the server's back: two lines above the declaration.
+    TFile.WriteAllText(LUnit, 'unit DUnit;'#13#10'interface'#13#10 +
+      '// one'#13#10'// two'#13#10'procedure DFoo;'#13#10'implementation' +
+      #13#10'procedure DFoo; begin end;'#13#10'end.'#13#10);
+    LMoved := PumpUntil(function: Boolean
+      begin
+        Result := ReadLogFile(LLog).Contains(
+          'disk watch: 1 file(s) changed on disk');
+      end, 5000);
+    Check(LMoved, 'the watcher reported DUnit.pas and a rebuild was scheduled');
+    Check(DefinitionLine = 7,
+      'after: definition follows the implementation down to line 8');
+
+    // The same write, reported by the client as well: dropped by its stamp.
+    LRebuilds := CountOf(ReadLogFile(LLog), 'analysis done: full rebuild');
+    SendDidChangeWatched(LUnit);
+    Check(DefinitionLine = 7, 'still line 8 after the client''s report');
+    Check(ReadLogFile(LLog).Contains('watched: 1 change(s) already acted on'),
+      'the client''s report of the same write is a repeat');
+    Check(CountOf(ReadLogFile(LLog), 'analysis done: full rebuild') = LRebuilds,
+      'no second rebuild for it');
+  finally
+    GClient := LSaved;
+    LOwn.Free;
+    if TDirectory.Exists(LDir) then
+      TDirectory.Delete(LDir, True);
+  end;
+end;
+
 { 5y. AN $I INCLUDE'S EDIT REACHES THE UNITS INCLUDING IT (0.76.10), over a
   project of its own in a scratch directory - its own server and log, like
   5x. An include has no model, and the server's "is this file ours" asked
@@ -6715,6 +6866,7 @@ begin
       TestCancelHygiene;
       TestUnusedUnits(GExe);
       TestUnusedGroup(GExe);
+      TestDiskWatch(GExe);
       TestIncludeEdits(GExe);
       TestCompilerVersion(GExe);
       // Empties the server log: after every section that reads it back.

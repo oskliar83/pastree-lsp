@@ -24,6 +24,7 @@ uses
   PasLsp.SyncPrototypes in 'source\PasLsp.SyncPrototypes.pas',
   PasLsp.AnnotateArgs in 'source\PasLsp.AnnotateArgs.pas',
   PasLsp.UseUnit in 'source\PasLsp.UseUnit.pas',
+  PasLsp.DiskWatch in 'source\PasLsp.DiskWatch.pas',
   PasLsp.BlockClose in 'source\PasLsp.BlockClose.pas',
   PasLsp.Formatting in 'source\PasLsp.Formatting.pas',
   PasLsp.XmlDoc in 'source\PasLsp.XmlDoc.pas',

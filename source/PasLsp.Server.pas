@@ -64,6 +64,10 @@ unit PasLsp.Server;
                   closure's totals of errors, warnings and hints differ from
                   the last ones sent (PublishDiagnosticCounts). False (the
                   default) sends nothing
+    "diskWatch"   - True (the default) watches the directories the analysis
+                  read its sources from and rebuilds when a unit changes
+                  there outside any editor (PasLsp.DiskWatch). False leaves
+                  it to the client's didChangeWatchedFiles alone
   A .dproj brings its own MainSource/search paths/defines/namespaces/aliases
   (TPasDProj - the same MSBuild evaluation the CLI tools use). Without a
   projectFile the open documents themselves become the analysis roots.
@@ -107,6 +111,7 @@ uses
   PasLsp.SyncPrototypes,
   PasLsp.AnnotateArgs,
   PasLsp.UseUnit,
+  PasLsp.DiskWatch,
   PasTree.UsesEdit,
   PasTree.SymbolEdit,
   PasTree.Sema.Lint,
@@ -423,6 +428,17 @@ type
     // the analyzed inputs did not change", 2026-09-24). Set with the
     // schedule, cleared when a full rebuild starts reading.
     FDiskMoved: Boolean;
+    // THE SERVER'S OWN DISK WATCH (PasLsp.DiskWatch, 0.95.0): the "diskWatch"
+    // option (default True), the watcher - created after the first full
+    // analysis, over the directories its sources came from - and the
+    // directory set last handed to it. FDiskStamps: lower-cased path -> the
+    // stamp (LspDiskStamp) of the last change acted on, from the watcher or
+    // a client alike - the SAME write arrives from both, and from the IDE's
+    // reload notification too, and only the first may cost anything.
+    FDiskWatch: Boolean;
+    FWatcher: TLspDiskWatcher;
+    FWatchedSig: string;
+    FDiskStamps: TDictionary<string, string>;
     // THE IDLE FAULT THAT REPEATS. A permanent failure inside the idle path
     // fires on every 50ms tick and never clears, so it writes the same line
     // some fifteen times a second for as long as the session lives - 295
@@ -723,6 +739,17 @@ type
     procedure HandleDidChange(AParams: TJSONValue);
     procedure HandleDidClose(AParams: TJSONValue);
     procedure HandleDidChangeWatchedFiles(AParams: TJSONValue);
+    { Changes on disk, from a client's didChangeWatchedFiles or the server's
+      own watcher (ASource names which, for the log): each acted on once per
+      stamp, a rebuild scheduled when one reaches the analysis. }
+    procedure ApplyDiskChanges(const AChanges: TArray<TLspDiskChange>;
+      const ASource: string);
+    { What the watcher saw, once AQuietMs passed since its latest event
+      (0 = now: a request is about to be answered). }
+    procedure PumpDiskWatch(AQuietMs: Cardinal);
+    { The watcher pointed at the directories the analysis read: created on
+      the first call, its set replaced when the set moved. }
+    procedure RefreshWatchedDirs;
   public
     { ACancels is the reader thread's cancel set; not owned. }
     constructor Create(ACancels: TLspCancelSet);
@@ -866,6 +893,8 @@ begin
   FPromoteRebuilt.Sorted := True;
   FPromoteRebuilt.Duplicates := dupIgnore;
   FLightLibraries := True;
+  FDiskWatch := True;
+  FDiskStamps := TDictionary<string, string>.Create;
   FFormatOptions := TPasFormatOptions.Default;
   FFormatDcuText := True;
   FPlatform := pfWin64;
@@ -884,6 +913,8 @@ begin
   FlushIdleFault;
   if FClientHandle <> 0 then
     CloseHandle(FClientHandle);
+  FWatcher.Free;
+  FDiskStamps.Free;
   FCompletion.Free;
   InvalidateAnalysis;
   FOutgoing.Free;
@@ -1271,6 +1302,7 @@ begin
       AOptions.GetValue<Boolean>('undeclaredBehindMissingUnits', False);
     FClosureNotify := AOptions.GetValue<Boolean>('closure', False);
     FCountsNotify := AOptions.GetValue<Boolean>('diagnosticCounts', False);
+    FDiskWatch := AOptions.GetValue<Boolean>('diskWatch', True);
   end;
   // The formatter's style: the `formatting` member, absent = the library's
   // default. Logged by ApplyFormatConfig once the log path is known - below.
@@ -2041,6 +2073,10 @@ begin
   Log(LDone);
   // Before the diagnostics: the client routes the files they name by it.
   PublishClosure;
+  // A full run may read new directories; a module run only when it took
+  // units in (RefreshWatchedDirs compares the set and does nothing else).
+  if not LWasModule or (FProject.ModelCount <> FModuleBaseCount) then
+    RefreshWatchedDirs;
   // A benchmark's run is the full one it started (StartAnalysis from
   // HandleBenchmark); an incremental one cannot be in between, since the
   // benchmark freed the project the incremental path needs.
@@ -3779,6 +3815,8 @@ begin
     and keep serving: the next tick tries again, and if the fault is permanent
     the log names it instead of a vanished exe. }
   try
+    // 150 ms of quiet first: a checkout's burst becomes one batch.
+    PumpDiskWatch(150);
     if (FPendingDue <> 0) and (GetTickCount64 >= FPendingDue) then
       FlushPending;
     FinalizeAnalysisIfDone;
@@ -10387,16 +10425,57 @@ begin
 end;
 
 { workspace/didChangeWatchedFiles - a file changed on disk, outside any
-  editor buffer we hold.
+  editor buffer we hold. Parsed here, acted on by ApplyDiskChanges, which
+  the server's own watcher feeds too. }
+procedure TLspServer.HandleDidChangeWatchedFiles(AParams: TJSONValue);
+var
+  LChanges: TJSONArray;
+  LItem: TJSONValue;
+  LUri: string;
+  LList: TList<TLspDiskChange>;
+  LChange: TLspDiskChange;
+begin
+  if (AParams = nil) or
+     not AParams.TryGetValue<TJSONArray>('changes', LChanges) then
+    Exit;
+  LList := TList<TLspDiskChange>.Create;
+  try
+    for LItem in LChanges do
+    begin
+      if not LItem.TryGetValue<string>('uri', LUri) then
+        Continue;
+      LChange.Path := UriToPath(LUri);
+      if LChange.Path = '' then
+        Continue;
+      LChange.Kind := LItem.GetValue<Integer>('type', DISK_CHANGED);
+      LList.Add(LChange);
+    end;
+    ApplyDiskChanges(LList.ToArray, 'watched');
+  finally
+    LList.Free;
+  end;
+end;
 
-  The CLIENT owns the watching: an editor already knows about file system
-  events, and the IDE plugin gets the same news from ToolsAPI, so a watcher
-  inside the server would be a second (polling, platform-specific) source of
-  truth for something both clients already have. The VS Code client registers
-  the glob in its `synchronize.fileEvents`; any other client just sends this
-  notification.
+{ A file changed on disk, outside any editor buffer we hold - as a client
+  reports it (didChangeWatchedFiles) or the server's own watcher sees it
+  (PasLsp.DiskWatch, 0.95.0).
 
-  What matters here is deciding whether a rebuild is actually due:
+  WHO WATCHES. Until 0.95.0 only the client did, on the premise that the IDE
+  plugin gets the news from ToolsAPI. It does not - ToolsAPI says nothing
+  about a unit that is not open in the IDE being rewritten by git, another
+  editor or an agent - and the analysis answered about the old text until a
+  rename refused to write (2026-11-19). The server now watches the
+  directories its closure came from itself; the clients keep sending what
+  they see.
+
+  ONE WRITE, SEVERAL REPORTS. The watcher, the client's notification and,
+  for a file open in the IDE, the IDE's reload all report the same change,
+  in any order. Each is acted on once per STAMP (LspDiskStamp: size and last
+  write time): the first report records it, a later one finding the same
+  stamp is dropped. A file open here costs nothing either way - the overlay
+  wins and the reload arrives as an ordinary didChange.
+
+  What matters next is deciding whether a rebuild is actually due:
 
   - a file we hold OPEN cannot change the analysis, because the analysis reads
     the OVERLAY for it, not the disk (document truth). No rebuild - but the
@@ -10413,27 +10492,21 @@ end;
   and namespaces are read once at initialize, so honoring it would need a
   reconfigure the protocol gives us no clean moment for. Saying so beats
   either silence or a rebuild that quietly uses the old configuration. }
-procedure TLspServer.HandleDidChangeWatchedFiles(AParams: TJSONValue);
+procedure TLspServer.ApplyDiskChanges(const AChanges: TArray<TLspDiskChange>;
+  const ASource: string);
 var
-  LChanges: TJSONArray;
-  LItem: TJSONValue;
-  LUri, LPath, LExt, LDisk: string;
+  LChange: TLspDiskChange;
+  LPath, LExt, LDisk, LStamp, LSeen: string;
   LDoc: TLspDocument;
   LRebuild: Boolean;
-  LTouched: Integer;
+  LTouched, LRepeats: Integer;
 begin
-  if (AParams = nil) or
-     not AParams.TryGetValue<TJSONArray>('changes', LChanges) then
-    Exit;
   LRebuild := False;
   LTouched := 0;
-  for LItem in LChanges do
+  LRepeats := 0;
+  for LChange in AChanges do
   begin
-    if not LItem.TryGetValue<string>('uri', LUri) then
-      Continue;
-    LPath := UriToPath(LUri);
-    if LPath = '' then
-      Continue;
+    LPath := LChange.Path;
     LExt := LowerCase(TPath.GetExtension(LPath));
     if LExt = '.dproj' then
     begin
@@ -10445,6 +10518,15 @@ begin
     if (LExt <> '.pas') and (LExt <> '.dpr') and (LExt <> '.dpk') and
        (LExt <> '.inc') then
       Continue;
+    // The same write reported again - by the client after the watcher, the
+    // watcher after the client, or twice by the file system itself.
+    LStamp := LspDiskStamp(LPath);
+    if FDiskStamps.TryGetValue(LowerCase(LPath), LSeen) and (LSeen = LStamp) then
+    begin
+      Inc(LRepeats);
+      Continue;
+    end;
+    FDiskStamps.AddOrSetValue(LowerCase(LPath), LStamp);
     Inc(LTouched);
     if FDocs.TryGet(LPath, LDoc) then
     begin
@@ -10456,27 +10538,160 @@ begin
       if FileMatches(LPath, LDoc.Text, LDisk) then
         LDisk := LDoc.Text;   // see FileMatches: a decode difference is not an edit
       FDocs.SetDiskText(LPath, LDisk);
-      LogDetail('watched: ' + TPath.GetFileName(LPath) +
+      LogDetail(ASource + ': ' + TPath.GetFileName(LPath) +
         ' changed on disk but is open here - overlay still wins');
     end
-    else if (LItem.GetValue<Integer>('type', 0) = 2) and
-       not AffectsAnalysis(LPath) then
+    else if (LChange.Kind = DISK_CHANGED) and not AffectsAnalysis(LPath) then
       // A REWRITTEN file this closure never read changes nothing here. The
       // RAD Studio client tells every running server about a reload (it
       // cannot know which projects compile the file), and a group of nine
       // must not answer with nine full rebuilds. Created and deleted files
       // still rebuild: either can change how a unit name resolves.
-      LogDetail('watched: ' + TPath.GetFileName(LPath) +
+      LogDetail(ASource + ': ' + TPath.GetFileName(LPath) +
         ' changed on disk, outside this closure - no rebuild')
     else
+    begin
       LRebuild := True;
+      LogDetail(Format('%s: %s %s', [ASource, TPath.GetFileName(LPath),
+        IfThen(LChange.Kind = DISK_CREATED, 'created',
+          IfThen(LChange.Kind = DISK_DELETED, 'deleted', 'changed on disk'))]));
+    end;
   end;
+  if LRepeats > 0 then
+    LogDetail(Format('%s: %d change(s) already acted on - nothing to do',
+      [ASource, LRepeats]));
   if LRebuild then
   begin
     FDiskMoved := True;
-    Log(Format('watched: %d file(s) changed on disk - rebuild scheduled',
-      [LTouched]));
+    Log(Format('%s: %d file(s) changed on disk - rebuild scheduled',
+      [ASource, LTouched]));
     ScheduleAnalysis('');
+  end;
+end;
+
+procedure TLspServer.PumpDiskWatch(AQuietMs: Cardinal);
+var
+  LChanges: TArray<TLspDiskChange>;
+  LOverflow, LFailed: TArray<string>;
+  LDir: string;
+begin
+  if (FWatcher = nil) or
+     not FWatcher.Take(AQuietMs, LChanges, LOverflow, LFailed) then
+    Exit;
+  for LDir in LFailed do
+    Log('disk watch: cannot watch ' + LDir + ' - a change there reaches ' +
+      'the analysis only when the client reports it');
+  if Length(LChanges) > 0 then
+    ApplyDiskChanges(LChanges, 'disk watch');
+  if Length(LOverflow) > 0 then
+  begin
+    // The names are lost: everything the analysis read may have moved.
+    Log(Format('disk watch: more changes at once than reported in %s - ' +
+      'rebuild scheduled', [string.Join(', ', LOverflow)]));
+    FDiskMoved := True;
+    ScheduleAnalysis('');
+  end;
+end;
+
+{ The directories of every unit the analysis holds, and the search paths -
+  a unit created there can change how a name resolves - less the installed
+  Studio tree, which nothing rewrites while the IDE runs and which is most
+  of the directories. Only those that exist: a unit read out of a .dcp has
+  a path inside the package file. The set is compared as one sorted string,
+  so a rebuild that reads the same closure hands the watcher nothing.
+
+  THE FIRST CALL closes the gap before the watch began: the first analysis
+  read the disk at FDiskReadAt, the watcher starts only now, and a unit
+  rewritten in between (a checkout during a long first build) would be
+  missed for good. One stat per unit, once. }
+procedure TLspServer.RefreshWatchedDirs;
+var
+  LSet: TDictionary<string, string>;
+  LKeys, LDirs: TArray<string>;
+  LBds, LDir, LFile, LKey, LSig: string;
+  LMid: Integer;
+  LFirst: Boolean;
+  LMissed: TList<TLspDiskChange>;
+  LChange: TLspDiskChange;
+  LDoc: TLspDocument;
+
+  procedure Add(const ADir: string);
+  var
+    LD: string;
+  begin
+    LD := ExcludeTrailingPathDelimiter(ADir);
+    if (LD = '') or LSet.ContainsKey(LowerCase(LD)) then
+      Exit;
+    if (LBds <> '') and StartsText(LBds, IncludeTrailingPathDelimiter(LD)) then
+      Exit;
+    LSet.Add(LowerCase(LD), LD);
+  end;
+
+begin
+  if not FDiskWatch or (FProject = nil) then
+    Exit;
+  LBds := GetEnvironmentVariable('BDS');
+  if LBds <> '' then
+    LBds := IncludeTrailingPathDelimiter(LBds);
+  LSet := TDictionary<string, string>.Create;
+  try
+    for LMid := 0 to FProject.ModelCount - 1 do
+    begin
+      LFile := FProject.ModelFile(LMid);
+      if LFile <> '' then
+        Add(ExtractFilePath(LFile));
+    end;
+    for LDir in FSearchPaths do
+      Add(LDir);
+    if FProjectDir <> '' then
+      Add(FProjectDir);
+    LKeys := LSet.Keys.ToArray;
+    TArray.Sort<string>(LKeys);
+    LSig := string.Join('|', LKeys);
+    if LSig = FWatchedSig then
+      Exit;
+    FWatchedSig := LSig;
+    LDirs := nil;
+    for LKey in LKeys do
+      if TDirectory.Exists(LSet[LKey]) then
+        LDirs := LDirs + [LSet[LKey]];
+  finally
+    LSet.Free;
+  end;
+  LFirst := FWatcher = nil;
+  if LFirst then
+    try
+      FWatcher := TLspDiskWatcher.Create;
+    except
+      on E: Exception do
+      begin
+        FDiskWatch := False;
+        Log('disk watch: not started (' + E.Message + ') - only the ' +
+          'client reports changes on disk');
+        Exit;
+      end;
+    end;
+  FWatcher.SetDirectories(LDirs);
+  Log(Format('disk watch: %d director(ies)', [Length(LDirs)]));
+  if not LFirst then
+    Exit;
+  LMissed := TList<TLspDiskChange>.Create;
+  try
+    for LMid := 0 to FProject.ModelCount - 1 do
+    begin
+      LFile := FProject.ModelFile(LMid);
+      if (LFile <> '') and not FDocs.TryGet(LFile, LDoc) and
+         DiskNewerThanAnalysis(LFile) then
+      begin
+        LChange.Path := LFile;
+        LChange.Kind := DISK_CHANGED;
+        LMissed.Add(LChange);
+      end;
+    end;
+    if LMissed.Count > 0 then
+      ApplyDiskChanges(LMissed.ToArray, 'disk watch (before it started)');
+  finally
+    LMissed.Free;
   end;
 end;
 
@@ -11327,6 +11542,10 @@ begin
             'server is shutting down'));
         Exit;   // notifications after shutdown are simply dropped
       end;
+      // A request answers about the disk as it is NOW: what the watcher saw
+      // goes in before it, without waiting for the burst to settle.
+      if LMsg.IsRequest then
+        PumpDiskWatch(0);
       if LMsg.Method = 'textDocument/didOpen' then
       begin
         HandleDidOpen(LMsg.Params);

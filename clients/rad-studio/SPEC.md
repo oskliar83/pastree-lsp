@@ -271,7 +271,11 @@ debounce timer on `EditorViewModified` and pushes only the modified buffers as
   `TPasProjectSourceManager.HandlesFile`).
 - **`IOTAProjectNotifier`** - `3928`: `ModuleAdded`, `ModuleRemoved`,
   `ModuleRenamed`. Feeds `workspace/didChangeWatchedFiles` precisely instead of
-  the server guessing from a file watcher.
+  the server guessing from a file watcher. It says nothing about a unit that
+  is not open being REWRITTEN on disk (git, another editor, an agent), and
+  nothing else in ToolsAPI does: since 0.95.0 the server watches the
+  directories of its closure itself (SPEC.md, `workspace/didChangeWatchedFiles`),
+  after a rename refused to write to such a unit on 2026-11-19.
 - ~~**`IOTAIDENotifier80`** - `5929`~~ - **partly adopted 2026-08-21.**
   `TProjectOpenNotifier` (a plain `IOTAIDENotifier`) starts the analysis on
   `ofnEndProjectGroupOpen` and `ofnActiveProjectChanged`, so the ~15 s a large
