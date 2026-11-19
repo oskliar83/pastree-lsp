@@ -439,6 +439,25 @@ type
     FWatcher: TLspDiskWatcher;
     FWatchedSig: string;
     FDiskStamps: TDictionary<string, string>;
+    // ONE CLOSED UNIT REWRITTEN ON DISK, nothing else (0.95.1): its path,
+    // waiting for the module run TryStartModuleAnalysis gives it instead of
+    // the full rebuild FDiskMoved asks for. The watcher names the files that
+    // moved, so the reason the module path refused every disk change - the
+    // server could not know it had been told of each one - no longer holds
+    // for a single named unit. A second file, a creation or deletion, an
+    // include or an overflow sets FDiskMoved instead, which wins. Cleared
+    // when a run takes it or a full rebuild starts reading.
+    FDiskModule: string;
+    // What the module run read of such a unit: lower-cased path -> the time
+    // it started (Now), before it re-read the file. DiskNewerThanAnalysis
+    // asks it beside FDiskReadAt, which only a full rebuild moves - without
+    // it, opening the unit afterwards found the file newer than "the
+    // analysis read" and rebuilt for a text already analyzed. Emptied when
+    // a full rebuild lands (its FDiskReadAt is newer than every entry).
+    FDiskModuleReadAt: TDictionary<string, TDateTime>;
+    // The running module session re-reads FModuleFile from disk (see
+    // FDiskModule) - for the log lines.
+    FModuleFromDisk: Boolean;
     // THE IDLE FAULT THAT REPEATS. A permanent failure inside the idle path
     // fires on every 50ms tick and never clears, so it writes the same line
     // some fifteen times a second for as long as the session lives - 295
@@ -895,6 +914,7 @@ begin
   FLightLibraries := True;
   FDiskWatch := True;
   FDiskStamps := TDictionary<string, string>.Create;
+  FDiskModuleReadAt := TDictionary<string, TDateTime>.Create;
   FFormatOptions := TPasFormatOptions.Default;
   FFormatDcuText := True;
   FPlatform := pfWin64;
@@ -915,6 +935,7 @@ begin
     CloseHandle(FClientHandle);
   FWatcher.Free;
   FDiskStamps.Free;
+  FDiskModuleReadAt.Free;
   FCompletion.Free;
   InvalidateAnalysis;
   FOutgoing.Free;
@@ -1605,6 +1626,7 @@ begin
   FModuleMode := False;
   FModuleFile := '';
   FModuleInclude := '';
+  FModuleFromDisk := False;
   // The keystroke case first: one already-analyzed unit's text changed and
   // nothing else did. If PasTree's guards accept it this costs tens of
   // milliseconds; if they refuse, the rebuild below runs instead, one
@@ -1752,6 +1774,7 @@ begin
     FSession.SetBuffer(LDoc.Path, LDoc.Text, LDoc.Version);
   FDirty := False;   // this session covers everything up to now
   FDiskMoved := False;   // and reads every file itself
+  FDiskModule := '';
   // Every buffer goes in above, so a unit waiting to be taken in is taken in
   // here if anything names it; one still outside afterwards is not named, or
   // not resolvable, and its next didOpen arms it again.
@@ -1809,7 +1832,8 @@ begin
   // Nor with a unit waiting to be taken in: its buffer is outside the closure
   // and therefore outside the signature, so the signature cannot see it.
   if (FProject <> nil) and (FSession = nil) and not FDiskMoved and
-     (OverlaySignature = FBuiltSignature) and not TakeInNamer(LNamer) then
+     (FDiskModule = '') and (OverlaySignature = FBuiltSignature) and
+     not TakeInNamer(LNamer) then
   begin
     Log('scheduled rebuild dropped: the analyzed inputs did not change');
     FPendingDue := 0;
@@ -2038,6 +2062,7 @@ begin
   if not LWasModule then
   begin
     FDiskReadAt := FBuildDiskReadAt;
+    FDiskModuleReadAt.Clear;   // older than FDiskReadAt, every one of them
     // A new closure: a promotion refused in the last one may go through in
     // this one (see FPromoteRefused).
     FPromoteRefused.Clear;
@@ -2130,7 +2155,7 @@ begin
     // signature cannot say it is done: a new unit opened while a build ran
     // that started before its buffer existed (see TakeInNamer).
     if (OverlaySignature = FBuiltSignature) and not FDiskMoved and
-       not TakeInNamer(LNamer) then
+       (FDiskModule = '') and not TakeInNamer(LNamer) then
     begin
       Log('documents changed mid-build and changed back - result is current');
       FDirty := False;
@@ -2469,7 +2494,9 @@ end;
   name. }
 function TLspServer.ModuleIncludeNote: string;
 begin
-  if FModuleInclude = '' then
+  if FModuleFromDisk then
+    Result := ' (changed on disk)'
+  else if FModuleInclude = '' then
     Result := ''
   else
     Result := Format(' (its $I include %s edited)',
@@ -2483,11 +2510,15 @@ end;
   file has no readable date. }
 function TLspServer.DiskNewerThanAnalysis(const APath: string): Boolean;
 var
-  LReadAt, LAge: TDateTime;
+  LReadAt, LAge, LModuleAt: TDateTime;
 begin
   LReadAt := FDiskReadAt;
   if (FSession <> nil) and not FModuleMode then
     LReadAt := FBuildDiskReadAt;
+  // A module run that re-read this one unit from disk (see FDiskModule).
+  if FDiskModuleReadAt.TryGetValue(LowerCase(APath), LModuleAt) and
+     (LModuleAt > LReadAt) then
+    LReadAt := LModuleAt;
   Result := (LReadAt > 0) and FileAge(APath, LAge) and (LAge > LReadAt);
 end;
 
@@ -2805,64 +2836,89 @@ begin
   // the module run, and FDiskMoved stayed set with nothing left to rebuild.
   if FDiskMoved then
     Exit;
-  LChanged := ChangedDocs(LPath);
-  // AN $I INCLUDE EDITED: its text is part of every unit including it, and it
-  // has no model of its own. One includer is a module run of THAT unit - the
-  // project re-reads the include from its buffer, which is handed over below
-  // with every other one; PasTree's differential harness found the run exact
-  // for an include in a routine body and in the interface. Several includers
-  // are several modules, which the entry point does not take: a rebuild,
-  // whose parse donor still reparses only the units whose text moved.
-  LInclude := '';
-  if (LChanged = 1) and (FProject.ModelIdOf(LPath) < 0) then
+  // ONE CLOSED UNIT REWRITTEN ON DISK and nothing else (see FDiskModule): a
+  // module run of that unit, which re-reads it from disk - it holds no
+  // overlay, so the source manager serves the file (its content cache is
+  // dropped after every full run). Anything beside it - an edit, a unit
+  // waiting to be taken in - and it is the full rebuild that covers both.
+  // Consumed either way: a refusal rebuilds, and the rebuild reads it.
+  if FDiskModule <> '' then
   begin
-    LIncluders := IncludersOf(LPath, LIncluder);
-    // The editor's spelling of the include, for the log lines: LPath is the
-    // signature's lower-cased one.
-    if FDocs.TryGet(LPath, LDoc) then
-      LInclude := LDoc.Path
-    else
-      LInclude := LPath;
-    if LIncluders > 1 then
+    LPath := FDiskModule;
+    FDiskModule := '';
+    if (ChangedDocs(LIncluder) <> 0) or TakeInNamer(LNamer) or
+       (FProject.ModelIdOf(LPath) < 0) then
     begin
-      Log(Format('%s is an $I include of %d units - full rebuild',
-        [TPath.GetFileName(LInclude), LIncluders]));
+      Log(Format('%s changed on disk beside other changes - full rebuild',
+        [TPath.GetFileName(LPath)]));
       Exit;
     end;
-    if LIncluders = 1 then
-      LPath := LIncluder
-    else
-      LInclude := '';
-  end;
-  LTakeInNote := '';
-  if TakeInNamer(LNamer) then
-  begin
-    // A unit waiting to be taken in (see TakeInNamer): its program is re-run,
-    // which takes the unit in - unless something else changed as well, when
-    // the rebuild covers both.
-    if (LChanged = 1) and
-       (FProject.ModelIdOf(LPath) <> FProject.ModelIdOf(LNamer)) then
-      Exit;
-    if LChanged > 1 then
-      Exit;
-    LPath := LNamer;
-    // Consumed here: whether the run takes them in or not, retrying would
-    // only repeat it (see FTakeIn).
-    for LIdx := FTakeIn.Count - 1 downto 0 do
-      if SameText(NamerOf(FTakeIn[LIdx]), LNamer) then
-      begin
-        LTakeInNote := LTakeInNote + ' ' + TPath.GetFileName(FTakeIn[LIdx]);
-        FTakeIn.Delete(LIdx);
-      end;
-    LTakeInNote := ' to take in' + LTakeInNote;
+    LId := FProject.ModelIdOf(LPath);
+    LInclude := '';
+    LTakeInNote := '';
+    FModuleFromDisk := True;
   end
-  else if LChanged <> 1 then
-    Exit;
-  // It has to be a unit this project already analyzed - a file the closure
-  // never reached has no model to swap.
-  LId := FProject.ModelIdOf(LPath);
-  if LId < 0 then
-    Exit;
+  else
+  begin
+    LChanged := ChangedDocs(LPath);
+    // AN $I INCLUDE EDITED: its text is part of every unit including it, and it
+    // has no model of its own. One includer is a module run of THAT unit - the
+    // project re-reads the include from its buffer, which is handed over below
+    // with every other one; PasTree's differential harness found the run exact
+    // for an include in a routine body and in the interface. Several includers
+    // are several modules, which the entry point does not take: a rebuild,
+    // whose parse donor still reparses only the units whose text moved.
+    LInclude := '';
+    if (LChanged = 1) and (FProject.ModelIdOf(LPath) < 0) then
+    begin
+      LIncluders := IncludersOf(LPath, LIncluder);
+      // The editor's spelling of the include, for the log lines: LPath is the
+      // signature's lower-cased one.
+      if FDocs.TryGet(LPath, LDoc) then
+        LInclude := LDoc.Path
+      else
+        LInclude := LPath;
+      if LIncluders > 1 then
+      begin
+        Log(Format('%s is an $I include of %d units - full rebuild',
+          [TPath.GetFileName(LInclude), LIncluders]));
+        Exit;
+      end;
+      if LIncluders = 1 then
+        LPath := LIncluder
+      else
+        LInclude := '';
+    end;
+    LTakeInNote := '';
+    if TakeInNamer(LNamer) then
+    begin
+      // A unit waiting to be taken in (see TakeInNamer): its program is re-run,
+      // which takes the unit in - unless something else changed as well, when
+      // the rebuild covers both.
+      if (LChanged = 1) and
+         (FProject.ModelIdOf(LPath) <> FProject.ModelIdOf(LNamer)) then
+        Exit;
+      if LChanged > 1 then
+        Exit;
+      LPath := LNamer;
+      // Consumed here: whether the run takes them in or not, retrying would
+      // only repeat it (see FTakeIn).
+      for LIdx := FTakeIn.Count - 1 downto 0 do
+        if SameText(NamerOf(FTakeIn[LIdx]), LNamer) then
+        begin
+          LTakeInNote := LTakeInNote + ' ' + TPath.GetFileName(FTakeIn[LIdx]);
+          FTakeIn.Delete(LIdx);
+        end;
+      LTakeInNote := ' to take in' + LTakeInNote;
+    end
+    else if LChanged <> 1 then
+      Exit;
+    // It has to be a unit this project already analyzed - a file the closure
+    // never reached has no model to swap.
+    LId := FProject.ModelIdOf(LPath);
+    if LId < 0 then
+      Exit;
+  end;
   // THE PROJECT'S SPELLING OF THE PATH, not the signature's. OverlayParts
   // lowercases so two spellings of one file compare equal; handing that key
   // to the analysis makes the re-analyzed model carry it, and every position
@@ -2877,6 +2933,9 @@ begin
   FModuleFile := LPath;
   FModuleInclude := LInclude;
   FModuleMode := True;
+  // Before the run reads the file: a write landing after this is newer.
+  if FModuleFromDisk then
+    FDiskModuleReadAt.AddOrSetValue(LowerCase(LPath), Now);
   // Set on the project rather than kept by the session, and set here rather
   // than once at startup: every full rebuild produces a NEW project carrying
   // PasTree's default, so the configured ceiling has to be re-applied to
@@ -10499,10 +10558,13 @@ var
   LPath, LExt, LDisk, LStamp, LSeen: string;
   LDoc: TLspDocument;
   LRebuild: Boolean;
-  LTouched, LRepeats: Integer;
+  LTouched, LRepeats, LMoved, LKind: Integer;
+  LOnly: TLspDiskChange;
 begin
   LRebuild := False;
   LTouched := 0;
+  LMoved := 0;
+  LOnly := Default(TLspDiskChange);
   LRepeats := 0;
   for LChange in AChanges do
   begin
@@ -10528,6 +10590,18 @@ begin
     end;
     FDiskStamps.AddOrSetValue(LowerCase(LPath), LStamp);
     Inc(LTouched);
+    // A "CREATION" OF A UNIT THE ANALYSIS ALREADY HOLDS, at the path it was
+    // read from, is a rewrite: an editor's atomic save writes a temporary
+    // file and renames it over the unit, which the watcher sees as
+    // RENAMED_NEW_NAME (created), and git checks a file out the same way. A
+    // name already resolved to that path resolves to it still, so nothing
+    // about resolution moved - and as a creation it cost a full rebuild
+    // where the change took the module path (0.95.2, found on a 1666-unit
+    // project saving one unit from another editor).
+    LKind := LChange.Kind;
+    if (LKind = DISK_CREATED) and (FProject <> nil) and
+       (FProject.ModelIdOf(LPath) >= 0) and FileExists(LPath) then
+      LKind := DISK_CHANGED;
     if FDocs.TryGet(LPath, LDoc) then
     begin
       try
@@ -10541,7 +10615,7 @@ begin
       LogDetail(ASource + ': ' + TPath.GetFileName(LPath) +
         ' changed on disk but is open here - overlay still wins');
     end
-    else if (LChange.Kind = DISK_CHANGED) and not AffectsAnalysis(LPath) then
+    else if (LKind = DISK_CHANGED) and not AffectsAnalysis(LPath) then
       // A REWRITTEN file this closure never read changes nothing here. The
       // RAD Studio client tells every running server about a reload (it
       // cannot know which projects compile the file), and a group of nine
@@ -10552,21 +10626,41 @@ begin
     else
     begin
       LRebuild := True;
+      Inc(LMoved);
+      LOnly := LChange;
+      LOnly.Kind := LKind;
       LogDetail(Format('%s: %s %s', [ASource, TPath.GetFileName(LPath),
-        IfThen(LChange.Kind = DISK_CREATED, 'created',
+        IfThen(LKind = DISK_CREATED, 'created',
           IfThen(LChange.Kind = DISK_DELETED, 'deleted', 'changed on disk'))]));
     end;
   end;
   if LRepeats > 0 then
     LogDetail(Format('%s: %d change(s) already acted on - nothing to do',
       [ASource, LRepeats]));
-  if LRebuild then
+  if not LRebuild then
+    Exit;
+  // ONE CLOSED UNIT REWRITTEN, nothing else moved since the last run (see
+  // FDiskModule): the module path, which re-reads that unit from disk. Not
+  // an include (no model of its own - the includers' rebuild), not a
+  // created or deleted file (either can change how a name resolves), not
+  // a second unit while the first still waits (the module path takes one).
+  if (LMoved = 1) and (LOnly.Kind = DISK_CHANGED) and not FDiskMoved and
+     (LowerCase(TPath.GetExtension(LOnly.Path)) <> '.inc') and
+     ((FDiskModule = '') or SameText(FDiskModule, LOnly.Path)) and
+     ((FProject = nil) or (FProject.ModelIdOf(LOnly.Path) >= 0)) then
+  begin
+    FDiskModule := LOnly.Path;
+    Log(Format('%s: %s changed on disk - incremental run scheduled',
+      [ASource, TPath.GetFileName(LOnly.Path)]));
+  end
+  else
   begin
     FDiskMoved := True;
+    FDiskModule := '';
     Log(Format('%s: %d file(s) changed on disk - rebuild scheduled',
       [ASource, LTouched]));
-    ScheduleAnalysis('');
   end;
+  ScheduleAnalysis('');
 end;
 
 procedure TLspServer.PumpDiskWatch(AQuietMs: Cardinal);

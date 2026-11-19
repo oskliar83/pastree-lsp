@@ -6013,14 +6013,17 @@ end;
   lines inserted above DFoo must move what definition answers by two,
   with no didChangeWatchedFiles sent. Then the same write reported by the
   client too, as the IDE reports a reload: acted on once, the second report
-  dropped by its stamp, no second rebuild. A scratch project, its own
-  server and log. }
+  dropped by its stamp, no second rebuild. Since 0.95.1 one closed unit
+  rewritten alone is an incremental run of it, re-read from disk, and two
+  files at once are still a full rebuild; an atomic save (temporary file
+  renamed over the unit, a "creation") is the incremental run too; opening the re-read unit after its
+  run schedules nothing. A scratch project, its own server and log. }
 procedure TestDiskWatch(const AExe: string);
 var
   LDir, LLog, LMain, LUnit, LText: string;
   LSaved, LOwn: TLspClient;
   LOptions: TLspInitOptions;
-  LLine, LChar, LRebuilds: Integer;
+  LLine, LChar, LRebuilds, LIncr: Integer;
   LMoved: Boolean;
 
   function CountOf(const AText, AWhat: string): Integer;
@@ -6108,27 +6111,99 @@ begin
         Result := ReadLogFile(LLog).Contains(' director(ies)');
       end, 5000), 'the server watches the project''s directory');
 
-    // Rewritten behind the server's back: two lines above the declaration.
+    // TWO closed files rewritten at once (0.95.1): the module path takes one
+    // unit, so this is the full rebuild. The program keeps its text - only
+    // its stamp moves - and the unit gains one line above the declaration.
+    LRebuilds := CountOf(ReadLogFile(LLog), 'analysis done: full rebuild');
+    TFile.WriteAllText(LMain, LText);
+    TFile.WriteAllText(LUnit, 'unit DUnit;'#13#10'interface'#13#10 +
+      '// one'#13#10'procedure DFoo;'#13#10'implementation' +
+      #13#10'procedure DFoo; begin end;'#13#10'end.'#13#10);
+    LMoved := PumpUntil(function: Boolean
+      begin
+        Result := ReadLogFile(LLog).Contains(
+          'disk watch: 2 file(s) changed on disk - rebuild scheduled');
+      end, 5000);
+    Check(LMoved, 'the watcher reported both files and a rebuild was scheduled');
+    Check(DefinitionLine = 6,
+      'two files: definition follows the implementation down to line 7');
+    Check(CountOf(ReadLogFile(LLog), 'analysis done: full rebuild') =
+      LRebuilds + 1, 'two files changed on disk: one full rebuild');
+
+    // ONE closed unit rewritten behind the server's back - one more line
+    // above the declaration: the incremental run of that unit, re-read from
+    // disk (0.95.1), not the full rebuild every disk change used to cost.
+    LRebuilds := CountOf(ReadLogFile(LLog), 'analysis done: full rebuild');
     TFile.WriteAllText(LUnit, 'unit DUnit;'#13#10'interface'#13#10 +
       '// one'#13#10'// two'#13#10'procedure DFoo;'#13#10'implementation' +
       #13#10'procedure DFoo; begin end;'#13#10'end.'#13#10);
     LMoved := PumpUntil(function: Boolean
       begin
         Result := ReadLogFile(LLog).Contains(
-          'disk watch: 1 file(s) changed on disk');
+          'disk watch: DUnit.pas changed on disk - incremental run scheduled');
       end, 5000);
-    Check(LMoved, 'the watcher reported DUnit.pas and a rebuild was scheduled');
+    Check(LMoved, 'the watcher reported DUnit.pas and an incremental run was' +
+      ' scheduled');
     Check(DefinitionLine = 7,
       'after: definition follows the implementation down to line 8');
+    Check(ReadLogFile(LLog).Contains(
+      'analysis done: incremental DUnit.pas (changed on disk)'),
+      'one unit changed on disk: an incremental run of it');
+    Check(CountOf(ReadLogFile(LLog), 'analysis done: full rebuild') = LRebuilds,
+      'one unit changed on disk: no full rebuild');
 
     // The same write, reported by the client as well: dropped by its stamp.
-    LRebuilds := CountOf(ReadLogFile(LLog), 'analysis done: full rebuild');
     SendDidChangeWatched(LUnit);
     Check(DefinitionLine = 7, 'still line 8 after the client''s report');
     Check(ReadLogFile(LLog).Contains('watched: 1 change(s) already acted on'),
       'the client''s report of the same write is a repeat');
     Check(CountOf(ReadLogFile(LLog), 'analysis done: full rebuild') = LRebuilds,
-      'no second rebuild for it');
+      'no rebuild for it');
+
+    // AN ATOMIC SAVE (0.95.2): another editor writes a temporary file and
+    // renames it over the unit, which the watcher sees as a creation. A
+    // creation at the path of a unit the analysis holds is a rewrite - the
+    // module path again, not the full rebuild a real creation costs. One
+    // more line above the declaration.
+    LRebuilds := CountOf(ReadLogFile(LLog), 'analysis done: full rebuild');
+    LIncr := CountOf(ReadLogFile(LLog),
+      'analysis done: incremental DUnit.pas (changed on disk)');
+    TFile.WriteAllText(LUnit + '.tmp', 'unit DUnit;'#13#10'interface'#13#10 +
+      '// one'#13#10'// two'#13#10'// three'#13#10'procedure DFoo;'#13#10 +
+      'implementation'#13#10'procedure DFoo; begin end;'#13#10'end.'#13#10);
+    Check(MoveFileEx(PChar(LUnit + '.tmp'), PChar(LUnit),
+      MOVEFILE_REPLACE_EXISTING), 'atomic save: renamed over the unit');
+    // Counted inline: an anonymous method cannot capture the nested CountOf.
+    LMoved := PumpUntil(function: Boolean
+      const
+        CLine = 'disk watch: DUnit.pas changed on disk - incremental run' +
+          ' scheduled';
+      var
+        LNow: string;
+      begin
+        LNow := ReadLogFile(LLog);
+        Result := (Length(LNow) - Length(LNow.Replace(CLine, ''))) div
+          Length(CLine) = 2;
+      end, 5000);
+    Check(LMoved, 'atomic save: an incremental run was scheduled');
+    Check(DefinitionLine = 8,
+      'atomic save: definition follows the implementation down to line 9');
+    Check(CountOf(ReadLogFile(LLog),
+      'analysis done: incremental DUnit.pas (changed on disk)') = LIncr + 1,
+      'atomic save: an incremental run of the unit');
+    Check(CountOf(ReadLogFile(LLog), 'analysis done: full rebuild') = LRebuilds,
+      'atomic save: no full rebuild');
+
+    // Opened now, the unit matches the disk the incremental run read: nothing
+    // new for the analysis (FDiskModuleReadAt) - before it, the file looked
+    // newer than "the analysis read the disk", which only a full rebuild
+    // moves, and opening it rebuilt for a text already analyzed.
+    SendDidOpen(LUnit);
+    Check(DefinitionLine = 8, 'still line 9 with the unit open');
+    Check(not ReadLogFile(LLog).Contains('changed on disk since the analysis' +
+      ' read it'), 'opening the re-read unit schedules nothing');
+    Check(CountOf(ReadLogFile(LLog), 'analysis done: full rebuild') = LRebuilds,
+      'no rebuild on opening it');
   finally
     GClient := LSaved;
     LOwn.Free;
